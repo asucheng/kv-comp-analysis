@@ -1,0 +1,28 @@
+[project]
+name = "kv-comp-analysis"
+version = "0.1.0"
+description = "Residential comp-analysis MCP server for KV Capital (Calgary)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=3.0",
+    "pydantic>=2.6",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+browser = ["playwright>=1.44"]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+kv-comp-analysis = "mcp_server.server:main"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["mcp_server"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
