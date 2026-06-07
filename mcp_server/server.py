@@ -37,7 +37,18 @@ class Tools:
         data["provenance"] = provenance
         return Subject(**data)
 
+    @staticmethod
+    def _require(subject: Subject, fields: list[str]) -> None:
+        missing = [f for f in fields if getattr(subject, f) is None]
+        if missing:
+            raise ValueError(
+                "Subject is missing required field(s): "
+                + ", ".join(missing)
+                + ". Ask the user to provide them (or correct the address)."
+            )
+
     def find_comps(self, subject: Subject, criteria: Optional[Criteria] = None) -> FindCompsResult:
+        self._require(subject, ["lat", "lng", "sqft"])
         criteria = criteria or Criteria()
         candidates = self.source.recent_sales(
             subject.community, lookback_months=criteria.lookback_months, as_of=self.as_of)
@@ -45,6 +56,7 @@ class Tools:
 
     def estimate_value(self, subject: Subject, comps: list, *,
                        rules: Optional[AdjustmentRules] = None, ladder_depth: int = 0) -> Estimate:
+        self._require(subject, ["sqft"])
         return reconcile(subject, comps, rules or AdjustmentRules(),
                          as_of=self.as_of, ladder_depth=ladder_depth)
 

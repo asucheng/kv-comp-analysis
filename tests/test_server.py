@@ -39,3 +39,14 @@ def test_cross_check_compares_to_avm():
     cc = TOOLS.cross_check(s, est.point)
     assert isinstance(cc, CrossCheck)
     assert cc.verdict
+
+
+import pytest
+
+
+def test_find_comps_raises_clear_error_when_subject_missing_geo():
+    s = Subject(address="Unknown Rd")  # no lat/lng/sqft
+    with pytest.raises(ValueError) as exc:
+        TOOLS.find_comps(s)
+    msg = str(exc.value).lower()
+    assert "lat" in msg and "sqft" in msg
