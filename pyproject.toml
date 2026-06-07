@@ -19,6 +19,7 @@ kv-comp-analysis = "mcp_server.server:main"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = ["live: hits the real HonestDoor network endpoint"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["mcp_server"]
