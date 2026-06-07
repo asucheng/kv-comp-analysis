@@ -1,41 +1,58 @@
+# tests/test_honestdoor.py
 from datetime import date
+import pytest
 import httpx
 from mcp_server.compsource.base import CompSource, PropertyRecord
-from mcp_server.compsource.honestdoor import HonestDoorCompSource, parse_property, parse_sales
+from mcp_server.compsource.honestdoor import (
+    HonestDoorCompSource, property_to_record, parse_sales,
+)
 
 
 def test_honestdoor_is_a_compsource():
     assert issubclass(HonestDoorCompSource, CompSource)
 
 
-def test_parse_property_maps_fields():
-    raw = {"community": "Roxboro", "latitude": 51.025, "longitude": -114.073,
-           "squareFootage": 1200, "yearBuilt": 1930, "bedrooms": 2, "bathrooms": 3,
-           "lotSize": 5998, "avmValue": 957400, "assessedValue": 900000}
-    rec = parse_property("1431 6 St NW", raw)
+def test_property_to_record_maps_verified_fields():
+    raw = {"fullAddress": "1431 6 St NW", "yearBuilt": 1930, "livingArea": 1200,
+           "bedroomsTotal": 2, "bathroomsTotal": 3, "predictedValue": 957400,
+           "taxAssessedValue": 900000, "location": {"lat": 51.06, "lon": -114.09}}
+    rec = property_to_record("fallback", raw)
     assert isinstance(rec, PropertyRecord)
-    assert rec.community == "Roxboro" and rec.sqft == 1200 and rec.year_built == 1930
-    assert rec.hd_estimate == 957400
+    assert rec.address == "1431 6 St NW" and rec.sqft == 1200 and rec.year_built == 1930
+    assert rec.lat == 51.06 and rec.lng == -114.09
+    assert rec.hd_estimate == 957400 and rec.assessed_value == 900000
 
 
-def test_parse_sales_filters_to_real_sales_only():
+def test_parse_sales_keeps_only_usable_real_sales():
     rows = [
-        {"address": "3028 1 St SW", "soldPrice": 1801000, "soldDate": "2026-01-16",
-         "squareFootage": 2532, "latitude": 51.02, "longitude": -114.08,
-         "bedrooms": 3, "bathrooms": 3, "yearBuilt": 1982},
-        {"address": "no-price", "soldPrice": None, "soldDate": None,
-         "squareFootage": 2000, "latitude": 51.02, "longitude": -114.08},
+        # usable: has closePrice, closeDate, livingArea, location
+        {"fullAddress": "A", "closePrice": 800000, "closeDate": "2026-01-16T00:00:00.000Z",
+         "livingArea": 2000, "bedroomsTotal": 3, "bathroomsTotal": 2, "yearBuilt": 1985,
+         "location": {"lat": 51.05, "lon": -114.08}},
+        # skip: no livingArea (sparse attribute)
+        {"fullAddress": "B", "closePrice": 700000, "closeDate": "2026-02-01T00:00:00.000Z",
+         "livingArea": None, "location": {"lat": 51.0, "lon": -114.0}},
+        # skip: no sale (closePrice null = AVM-only / unsold)
+        {"fullAddress": "C", "closePrice": None, "closeDate": None,
+         "livingArea": 1800, "location": {"lat": 51.0, "lon": -114.0}},
     ]
     comps = parse_sales(rows)
-    assert [c.address for c in comps] == ["3028 1 St SW"]
+    assert [c.address for c in comps] == ["A"]
     assert comps[0].sold_date == date(2026, 1, 16)
+    assert comps[0].sqft == 2000 and comps[0].price_per_sqft == 400.0
 
 
-def test_recent_sales_uses_injected_client(monkeypatch):
-    payload = {"data": {"recentlySold": [
-        {"address": "3028 1 St SW", "soldPrice": 1801000, "soldDate": "2026-01-16",
-         "squareFootage": 2532, "latitude": 51.02, "longitude": -114.08,
-         "bedrooms": 3, "bathrooms": 3, "yearBuilt": 1982}]}}
+def test_get_property_documents_slug_only_limitation():
+    with pytest.raises(NotImplementedError):
+        HonestDoorCompSource().get_property("123 Main St")
+
+
+def test_recent_sales_uses_injected_client_and_real_schema():
+    payload = {"data": {"getProperties": [
+        {"fullAddress": "3028 1 St SW", "closePrice": 1801000,
+         "closeDate": "2026-01-16T00:00:00.000Z", "livingArea": 2532,
+         "bedroomsTotal": 3, "bathroomsTotal": 3, "yearBuilt": 1982,
+         "location": {"lat": 51.02, "lon": -114.08}}]}}
 
     def handler(request):
         return httpx.Response(200, json=payload)
@@ -43,4 +60,4 @@ def test_recent_sales_uses_injected_client(monkeypatch):
     client = httpx.Client(transport=httpx.MockTransport(handler))
     src = HonestDoorCompSource(client=client)
     comps = src.recent_sales("Roxboro", lookback_months=12, as_of=date(2026, 6, 1))
-    assert len(comps) == 1 and comps[0].sold_price == 1801000
+    assert len(comps) == 1 and comps[0].sold_price == 1801000 and comps[0].sqft == 2532

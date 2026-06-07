@@ -1,3 +1,4 @@
+# mcp_server/compsource/honestdoor.py
 from __future__ import annotations
 from datetime import date, datetime
 from typing import Any, Optional
@@ -8,39 +9,57 @@ from mcp_server.compsource.base import CompSource, PropertyRecord
 GRAPHQL_URL = "https://core-backend.honestdoor.com/v2/graphql"
 _HEADERS = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
 
-# NOTE: exact GraphQL query strings + field names must be confirmed against the
-# live API during the Step 1 spike (the schema below is the integration target).
-_PROPERTY_QUERY = "query($address:String!){ property(address:$address){ \
-community latitude longitude squareFootage yearBuilt bedrooms bathrooms \
-lotSize avmValue assessedValue } }"
-_SALES_QUERY = "query($community:String!,$months:Int!){ recentlySold(\
-community:$community, months:$months){ address soldPrice soldDate squareFootage \
-latitude longitude bedrooms bathrooms yearBuilt } }"
+# Verified-live schema (2026-06-07). Introspection is disabled on the Apollo
+# server; field names below were confirmed via error-suggestion probing + live
+# queries against getProperties.
+_PROPERTIES_QUERY = (
+    "query($filter: PropertyFilterInput){ getProperties(filter: $filter){ "
+    "fullAddress yearBuilt livingArea bedroomsTotal bathroomsTotal "
+    "closePrice closeDate taxAssessedValue predictedValue location { lat lon } } }"
+)
 
 
-def parse_property(address: str, raw: dict[str, Any]) -> PropertyRecord:
+def _parse_iso_date(s: str) -> date:
+    # closeDate looks like "2026-04-09T00:00:00.000Z"
+    return datetime.fromisoformat(s.replace("Z", "+00:00")).date()
+
+
+def property_to_record(address: str, raw: dict[str, Any]) -> PropertyRecord:
+    """Map a Property node to a PropertyRecord (subject attributes)."""
+    loc = raw.get("location") or {}
     return PropertyRecord(
-        address=address, community=raw.get("community"),
-        lat=raw.get("latitude"), lng=raw.get("longitude"),
-        sqft=raw.get("squareFootage"), year_built=raw.get("yearBuilt"),
-        beds=raw.get("bedrooms"), baths=raw.get("bathrooms"),
-        lot_sf=raw.get("lotSize"), property_type="detached",
-        hd_estimate=raw.get("avmValue"), assessed_value=raw.get("assessedValue"),
+        address=raw.get("fullAddress") or address,
+        lat=loc.get("lat"), lng=loc.get("lon"),
+        sqft=raw.get("livingArea"), year_built=raw.get("yearBuilt"),
+        beds=raw.get("bedroomsTotal"), baths=raw.get("bathroomsTotal"),
+        property_type="detached",
+        hd_estimate=raw.get("predictedValue"),
+        assessed_value=raw.get("taxAssessedValue"),
     )
 
 
 def parse_sales(rows: list[dict[str, Any]]) -> list[Comp]:
+    """Map Property nodes to Comps, keeping only usable real sales.
+
+    A Property is usable as a comp only if it has a real sale (closePrice +
+    closeDate), a living area (for $/sqft), and coordinates. The bulk feed is
+    sparse, so most rows are skipped — that is expected and honest.
+    """
     comps: list[Comp] = []
     for r in rows:
-        if not r.get("soldPrice") or not r.get("soldDate"):
-            continue  # skip AVM-only / unsold records — REAL sales only
+        loc = r.get("location") or {}
+        if not (r.get("closePrice") and r.get("closeDate")
+                and r.get("livingArea") and loc.get("lat") is not None
+                and loc.get("lon") is not None):
+            continue
         comps.append(Comp(
-            address=r["address"], lat=r["latitude"], lng=r["longitude"],
-            sold_price=float(r["soldPrice"]),
-            sold_date=datetime.strptime(r["soldDate"], "%Y-%m-%d").date(),
-            sqft=float(r["squareFootage"]), beds=r.get("bedrooms"),
-            baths=r.get("bathrooms"), year_built=r.get("yearBuilt"),
-            property_type="detached",
+            address=r.get("fullAddress") or "(address withheld)",
+            lat=loc["lat"], lng=loc["lon"],
+            sold_price=float(r["closePrice"]),
+            sold_date=_parse_iso_date(r["closeDate"]),
+            sqft=float(r["livingArea"]),
+            beds=r.get("bedroomsTotal"), baths=r.get("bathroomsTotal"),
+            year_built=r.get("yearBuilt"), property_type="detached",
         ))
     return comps
 
@@ -48,17 +67,19 @@ def parse_sales(rows: list[dict[str, Any]]) -> list[Comp]:
 class HonestDoorCompSource(CompSource):
     """Live HonestDoor public data via GraphQL. Inject `client` for tests.
 
-    SPIKE RESULT (2026-06-07):
-    curl -s -X POST "https://core-backend.honestdoor.com/v2/graphql" \
-         -H "Content-Type: application/json" -A "Mozilla/5.0" \
-         -d '{"query":"{ __typename }"}' | head -c 400
-    -> {"data":{"__typename":"Query"}}
+    VERIFIED SCHEMA (2026-06-07): endpoint reachable, no Turnstile on the API;
+    introspection disabled. Real query: getProperties(filter:{neighbourhoodName}).
+    Property carries closePrice/closeDate/livingArea/yearBuilt/bedroomsTotal/
+    bathroomsTotal/predictedValue/taxAssessedValue/location{lat,lon}.
 
-    Interpretation: GraphQL endpoint is directly reachable — no Cloudflare/Turnstile
-    block. The introspection-style __typename query succeeded with HTTP 200 and a
-    valid GraphQL response. However, the specific query field names (_PROPERTY_QUERY,
-    _SALES_QUERY) are assumed from page-probe analysis and have NOT been verified
-    against the live schema. Integration tests must confirm actual field availability.
+    REAL-BUT-PARTIAL — synthetic source is the demo default because:
+      1. Attribute sparsity: livingArea/yearBuilt/beds/baths are NULL for ~90% of
+         bulk records; parse_sales skips rows missing closePrice/closeDate/
+         livingArea/location.
+      2. getProperty is slug-only — no address search — so get_property() below
+         cannot resolve a raw address against the public API.
+      3. neighbourhoodName is not geo-scoped (e.g. "Roxboro" returns Moncton, NB);
+         rely on the caller's haversine radius filter to drop far matches.
     """
 
     def __init__(self, client: Optional[httpx.Client] = None):
@@ -67,12 +88,18 @@ class HonestDoorCompSource(CompSource):
     def _query(self, query: str, variables: dict[str, Any]) -> dict[str, Any]:
         resp = self._client.post(GRAPHQL_URL, json={"query": query, "variables": variables})
         resp.raise_for_status()
-        return resp.json().get("data", {})
+        body = resp.json()
+        if body.get("errors"):
+            raise RuntimeError(f"HonestDoor GraphQL error: {body['errors']}")
+        return body.get("data", {})
 
     def get_property(self, address: str) -> PropertyRecord:
-        data = self._query(_PROPERTY_QUERY, {"address": address})
-        return parse_property(address, data.get("property") or {})
+        raise NotImplementedError(
+            "HonestDoor's public GraphQL exposes property lookup by slug only "
+            "(no address search). Resolve the subject via SyntheticCompSource or "
+            "user-provided overrides. See module docstring."
+        )
 
     def recent_sales(self, community: str, *, lookback_months: int, as_of: date) -> list[Comp]:
-        data = self._query(_SALES_QUERY, {"community": community, "months": lookback_months})
-        return parse_sales(data.get("recentlySold") or [])
+        data = self._query(_PROPERTIES_QUERY, {"filter": {"neighbourhoodName": community}})
+        return parse_sales(data.get("getProperties") or [])
