@@ -52,3 +52,10 @@ def test_ranking_orders_most_similar_first():
     farish = _comp("farish", 51.07, -114.07, 800_000, date(2026, 1, 1), 2300)
     kept, _ = filter_and_rank(s, [farish, near], Criteria(), as_of=AS_OF)
     assert [c.address for c in kept] == ["near", "farish"]
+
+
+def test_ranking_handles_subject_without_year_built():
+    s = Subject(address="S", lat=51.05, lng=-114.08, sqft=2000, property_type="detached")
+    c = _comp("c", 51.051, -114.081, 800_000, date(2026, 5, 1), 2010)  # has year_built=1985
+    kept, _ = filter_and_rank(s, [c], Criteria(), as_of=AS_OF)
+    assert [x.address for x in kept] == ["c"]

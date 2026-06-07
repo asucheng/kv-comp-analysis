@@ -13,7 +13,10 @@ def _similarity_score(subject: Subject, c: Comp, as_of: date) -> float:
     """Lower = more similar. Composite over distance, size, age, recency."""
     dist = c.distance_km if c.distance_km is not None else 0.0
     size_diff = abs(c.sqft - subject.sqft) / subject.sqft
-    age_diff = abs((c.year_built or subject.year_built) - subject.year_built)
+    if subject.year_built and c.year_built:
+        age_diff = abs(c.year_built - subject.year_built)
+    else:
+        age_diff = 0
     months = max(months_between(c.sold_date, as_of), 0)
     return dist / 10 + size_diff + age_diff / 20 + months / 24
 
