@@ -20,8 +20,12 @@ def test_get_property_is_deterministic():
     assert a.model_dump() == b.model_dump()
 
 
-def test_recent_sales_returns_comps_in_community():
+def test_recent_sales_returns_comps_within_radius():
+    from mcp_server.geo import haversine_km
     src = SyntheticCompSource(seed=42)
-    comps = src.recent_sales("Roxboro", lookback_months=12, as_of=date(2026, 6, 1))
+    lat, lng = 51.05, -114.07
+    comps = src.recent_sales(lat=lat, lng=lng, radius_km=8.0,
+                             lookback_months=12, as_of=date(2026, 6, 1))
     assert len(comps) >= 8
     assert all(c.sold_price > 0 and c.sqft > 0 for c in comps)
+    assert all(haversine_km(lat, lng, c.lat, c.lng) <= 3.01 for c in comps)

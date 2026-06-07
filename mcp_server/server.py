@@ -10,6 +10,9 @@ from mcp_server.compsource.synthetic import SyntheticCompSource
 from mcp_server.comps import find_with_ladder
 from mcp_server.estimate import reconcile
 
+# Fetch candidates out to the widening ladder's max radius so relaxation has data.
+FETCH_RADIUS_KM = 8.0
+
 _SUBJECT_FIELDS = ["community", "lat", "lng", "sqft", "year_built",
                    "beds", "baths", "lot_sf", "property_type"]
 
@@ -48,10 +51,11 @@ class Tools:
             )
 
     def find_comps(self, subject: Subject, criteria: Optional[Criteria] = None) -> FindCompsResult:
-        self._require(subject, ["lat", "lng", "sqft"])
         criteria = criteria or Criteria()
+        self._require(subject, ["lat", "lng", "sqft"])
         candidates = self.source.recent_sales(
-            subject.community, lookback_months=criteria.lookback_months, as_of=self.as_of)
+            lat=subject.lat, lng=subject.lng, radius_km=FETCH_RADIUS_KM,
+            lookback_months=criteria.lookback_months, as_of=self.as_of)
         return find_with_ladder(subject, candidates, criteria, as_of=self.as_of)
 
     def estimate_value(self, subject: Subject, comps: list, *,

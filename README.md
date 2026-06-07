@@ -46,7 +46,7 @@ Hold-one-out backtest against real sold prices:
 ```bash
 python -c "from datetime import date; from eval.backtest import hold_one_out; \
 from mcp_server.compsource.synthetic import SyntheticCompSource; \
-r=hold_one_out(SyntheticCompSource(seed=1), community='Roxboro', as_of=date(2026,6,1)); \
+r=hold_one_out(SyntheticCompSource(seed=1), lat=51.05, lng=-114.07, as_of=date(2026,6,1)); \
 print(f'median abs error {r.median_abs_pct_error}% over {r.n} sales')"
 ```
 (Swap in `HonestDoorCompSource()` for a live real-data number — a representative sample-run figure.)

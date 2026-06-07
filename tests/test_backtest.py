@@ -4,7 +4,7 @@ from eval.backtest import hold_one_out
 
 
 def test_hold_one_out_reports_median_error():
-    result = hold_one_out(SyntheticCompSource(seed=7), community="Roxboro",
+    result = hold_one_out(SyntheticCompSource(seed=7), lat=51.05, lng=-114.07,
                           as_of=date(2026, 6, 1))
     assert result.n >= 4
     assert 0 <= result.median_abs_pct_error < 60

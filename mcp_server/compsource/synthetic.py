@@ -1,5 +1,6 @@
 from __future__ import annotations
 import hashlib
+import math
 import random
 from datetime import date, timedelta
 from mcp_server.models import Comp
@@ -45,21 +46,26 @@ class SyntheticCompSource(CompSource):
             assessed_value=round(sqft * ppsf * rng.uniform(0.92, 1.0), -2),
         )
 
-    def recent_sales(self, community: str, *, lookback_months: int, as_of: date) -> list[Comp]:
-        rng = random.Random(_seed_from(community, self.seed) ^ 0xC0FFEE)
-        lat, lng, ppsf, yr = self._anchor(community)
+    def recent_sales(self, *, lat: float, lng: float, radius_km: float,
+                     lookback_months: int, as_of: date) -> list[Comp]:
+        rng = random.Random(_seed_from(f"{round(lat, 3)},{round(lng, 3)}", self.seed) ^ 0xC0FFEE)
+        base_ppsf = 500.0
+        spread_km = min(radius_km, 3.0)  # keep most comps inside the core radius
         comps: list[Comp] = []
-        for i in range(rng.randint(10, 16)):
+        for i in range(rng.randint(12, 18)):
+            d_km = spread_km * math.sqrt(rng.random())   # uniform within the disk
+            theta = rng.uniform(0, 2 * math.pi)
+            dlat = (d_km * math.cos(theta)) / 111.0
+            dlng = (d_km * math.sin(theta)) / (111.0 * math.cos(math.radians(lat)))
             sqft = rng.randint(1400, 2600)
-            unit_ppsf = ppsf * rng.uniform(0.85, 1.15)
-            days_ago = rng.randint(5, lookback_months * 30)
+            unit_ppsf = base_ppsf * rng.uniform(0.85, 1.15)
+            days_ago = rng.randint(5, max(30, lookback_months * 30))
             comps.append(Comp(
-                address=f"{100+i} Synthetic Ave, {community}",
-                lat=round(lat + rng.uniform(-0.015, 0.015), 6),
-                lng=round(lng + rng.uniform(-0.015, 0.015), 6),
+                address=f"{100 + i} Synthetic Ave",
+                lat=round(lat + dlat, 6), lng=round(lng + dlng, 6),
                 sold_price=round(sqft * unit_ppsf, -2),
                 sold_date=as_of - timedelta(days=days_ago),
                 sqft=sqft, beds=rng.choice([2, 3, 4]), baths=rng.choice([2, 3]),
-                year_built=yr + rng.randint(-15, 15), property_type="detached",
+                year_built=1990 + rng.randint(-15, 15), property_type="detached",
             ))
         return comps

@@ -21,15 +21,17 @@ class BacktestResult(BaseModel):
     per_property: list[PropertyError]
 
 
-def hold_one_out(source: CompSource, *, community: str, as_of: date) -> BacktestResult:
-    """For each real sale, hide it, predict from the others, compare to actual."""
-    sales = source.recent_sales(community, lookback_months=12, as_of=as_of)
+def hold_one_out(source: CompSource, *, lat: float, lng: float, as_of: date,
+                 radius_km: float = 8.0) -> BacktestResult:
+    """For each real sale near (lat, lng), hide it, predict from the others, compare to actual."""
+    sales = source.recent_sales(lat=lat, lng=lng, radius_km=radius_km,
+                                lookback_months=12, as_of=as_of)
     rows: list[PropertyError] = []
     for i, target in enumerate(sales):
         others = [c for j, c in enumerate(sales) if j != i]
-        subject = Subject(address=target.address, community=community,
-                          lat=target.lat, lng=target.lng, sqft=target.sqft,
-                          year_built=target.year_built, property_type=target.property_type)
+        subject = Subject(address=target.address, lat=target.lat, lng=target.lng,
+                          sqft=target.sqft, year_built=target.year_built,
+                          property_type=target.property_type)
         found = find_with_ladder(subject, others, Criteria(), as_of=as_of)
         if len(found.comps) < Criteria().min_comps:
             continue

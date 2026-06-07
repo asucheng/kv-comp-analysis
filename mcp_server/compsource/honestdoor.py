@@ -100,6 +100,7 @@ class HonestDoorCompSource(CompSource):
             "user-provided overrides. See module docstring."
         )
 
-    def recent_sales(self, community: str, *, lookback_months: int, as_of: date) -> list[Comp]:
-        data = self._query(_PROPERTIES_QUERY, {"filter": {"neighbourhoodName": community}})
-        return parse_sales(data.get("getProperties") or [])
+    def recent_sales(self, *, lat: float, lng: float, radius_km: float,
+                     lookback_months: int, as_of: date) -> list[Comp]:
+        # Geo-enumeration via bbox will replace the community-name query in the next task.
+        return []

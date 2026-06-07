@@ -30,5 +30,7 @@ class CompSource(ABC):
         """Resolve a single subject property's attributes."""
 
     @abstractmethod
-    def recent_sales(self, community: str, *, lookback_months: int, as_of: date) -> list[Comp]:
-        """Candidate recent sales in a community (unfiltered by Sam's 5)."""
+    def recent_sales(self, *, lat: float, lng: float, radius_km: float,
+                     lookback_months: int, as_of: date) -> list[Comp]:
+        """Candidate recent sales within `radius_km` of (lat, lng), unfiltered by
+        Sam's full criteria (the caller applies the precise radius/size/age filters)."""
