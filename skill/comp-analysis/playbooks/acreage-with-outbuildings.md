@@ -1,7 +1,9 @@
 ---
 name: acreage-with-outbuildings
 when: subject is an acreage / non-standard rural lot, or has significant outbuildings
-author: example   date: 2026-06-07   status: shared
+author: example
+date: 2026-06-07
+status: shared
 validated: "illustrative example — not yet backtested"
 ---
 Trigger:   community-boundary comp search returns poor comps for rural/acreage subjects

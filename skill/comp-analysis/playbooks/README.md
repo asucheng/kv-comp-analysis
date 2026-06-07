@@ -23,7 +23,9 @@ method is a genuinely different domain (e.g. commercial).
 ---
 name: <kebab-name>
 when: <trigger conditions that make this play apply>
-author: <underwriter>   date: <YYYY-MM-DD>   status: personal | shared
+author: <underwriter>
+date: <YYYY-MM-DD>
+status: personal | shared
 validated: "<optional hold-one-out result>"
 ---
 Trigger:   <what situation this addresses>
