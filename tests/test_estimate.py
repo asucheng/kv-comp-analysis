@@ -94,3 +94,32 @@ def test_reconcile_low_confidence_when_sparse():
         c.distance_km = 0.6
     est = reconcile(s, comps, AdjustmentRules(), as_of=AS_OF, ladder_depth=0)
     assert est.confidence == "low"       # < 4 comps
+
+
+import pytest
+
+
+def test_comp_weight_handles_subject_without_year_built():
+    s = Subject(address="S", lat=51.05, lng=-114.08, sqft=2000)  # no year_built
+    c = _comp(800_000, 2000, 1985); c.distance_km = 0.6
+    w = comp_weight(s, c, AdjustmentRules(), as_of=AS_OF)
+    assert w > 0
+
+
+def test_reconcile_range_contains_point_with_skewed_weights():
+    s = _subject(sqft=2000, yb=1985)
+    # one very close, high-ppsf comp skews the weighted mean toward the top
+    comps = [_comp(1_200_000, 2000, 1985), _comp(800_000, 2000, 1985),
+             _comp(805_000, 2000, 1985), _comp(795_000, 2000, 1985),
+             _comp(800_000, 2000, 1985)]
+    comps[0].distance_km = 0.05
+    for c in comps[1:]:
+        c.distance_km = 2.5
+    est = reconcile(s, comps, AdjustmentRules(), as_of=AS_OF, ladder_depth=0)
+    assert est.low <= est.point <= est.high
+
+
+def test_reconcile_empty_comps_raises():
+    s = _subject()
+    with pytest.raises(ValueError):
+        reconcile(s, [], AdjustmentRules(), as_of=AS_OF, ladder_depth=0)

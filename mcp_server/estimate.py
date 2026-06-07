@@ -80,7 +80,10 @@ def remove_outliers(values: list[float], *, iqr_mult: float = 1.5) -> list[int]:
 def comp_weight(subject: Subject, comp: Comp, rules: AdjustmentRules, *, as_of: date) -> float:
     dist = comp.distance_km if comp.distance_km is not None else 0.0
     size_pct = abs(comp.sqft - subject.sqft) / subject.sqft
-    age_diff = abs((comp.year_built or subject.year_built) - subject.year_built)
+    if subject.year_built and comp.year_built:
+        age_diff = abs(comp.year_built - subject.year_built)
+    else:
+        age_diff = 0
     months = max(months_between(comp.sold_date, as_of), 0)
     denom = (1 + rules.weight_a * dist + rules.weight_b * size_pct
              + rules.weight_c * age_diff + rules.weight_d * months)
@@ -99,6 +102,8 @@ def reconcile(
     subject: Subject, comps: list[Comp], rules: AdjustmentRules, *,
     as_of: date, ladder_depth: int = 0,
 ) -> Estimate:
+    if not comps:
+        raise ValueError("reconcile requires at least one comp")
     notes: list[str] = []
     trend = estimate_trend(comps, rules, as_of=as_of)
     notes.append(f"Market trend applied: {trend*100:.2f}%/mo")
@@ -124,6 +129,7 @@ def reconcile(
     else:
         q1, q3 = ppsf_vals[0], ppsf_vals[-1]
     low, high = round(q1 * subject.sqft, 0), round(q3 * subject.sqft, 0)
+    low, high = min(low, point), max(high, point)
 
     m = mean(ppsf_vals)
     cov = (pstdev(ppsf_vals) / m) if (len(ppsf_vals) > 1 and m) else 0.0
