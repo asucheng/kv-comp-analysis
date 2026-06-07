@@ -49,7 +49,19 @@ https://www.honestdoor.com/recently-sold/ab/calgary/{community}
 
 **Usage rules:** fetch public pages politely / low-volume; attribute the source honestly in the README; do **not** use their paid "Sold Data+" product.
 
-**Fetch mechanics (probed 2026-06-07):** HonestDoor is a Next.js app whose listing data is loaded client-side from a **GraphQL backend** (`https://core-backend.honestdoor.com/v2/graphql`) — structured JSON, cleaner than HTML parsing. The page shell (~15 KB) does **not** embed the listing data. **Cloudflare Turnstile bot-protection is present** — a real risk for direct programmatic access, to be validated early in the build. Recommended adapter strategy, in order: (1) GraphQL endpoint for structured JSON; (2) **headless browser (Playwright)** that renders like a real user if bot-protection blocks (1); (3) HTML parsing as last resort. If HonestDoor hardens against all three, the pluggable `CompSource` lets us swap source, with the synthetic generator as safety net.
+**Fetch mechanics (probed 2026-06-07):** HonestDoor is a Next.js app whose listing data is loaded client-side from a **GraphQL backend** (`https://core-backend.honestdoor.com/v2/graphql`) — structured JSON, cleaner than HTML parsing. The page shell (~15 KB) does **not** embed the listing data.
+
+**SCHEMA VERIFIED (2026-06-07, live):** The GraphQL endpoint is **directly reachable — no Cloudflare/Turnstile block on the API**. Introspection is disabled (Apollo production), so the schema was mapped via error-suggestion probing. Verified surface:
+- Root query fields: `getProperty(filter: PropertyUniqueFilterInput!)`, `getProperties(filter: PropertyFilterInput)`, `getListing2`/`getListings2`, `getPermits`.
+- `Property` fields: `fullAddress, neighbourhood, city, yearBuilt, livingArea, bedroomsTotal, bathroomsTotal, closePrice, closeDate, taxAssessedValue, predictedValue` (AVM), `lotSizeArea, location { lat lon }, slug`.
+- Filters: `getProperties(filter: { neighbourhoodName })`; `getProperty(filter: { slug })`.
+
+**REAL-DATA LIMITATIONS (decisive — keep synthetic as demo default):**
+1. **Attribute sparsity** — in the bulk `getProperties` feed, `livingArea`/`yearBuilt`/`beds`/`baths`/`fullAddress` are NULL for ~90% of records; only `closePrice`/`closeDate`/`predictedValue`/`location` are reliably present. No `livingArea` ⇒ no $/sqft (Sam's core metric).
+2. **No address lookup** — `getProperty` is **slug-only**; no verified address→record search, so subject resolution by raw address isn't supported by the public API.
+3. **`neighbourhoodName` is not geo-scoped** — filtering "Roxboro" returned Moncton, NB properties. (Mitigated downstream: `find_comps`' haversine radius filter drops cross-province noise.)
+
+**Conclusion:** schema is real and the adapter now uses the verified field names, but the public feed is **real-but-partial** — not a drop-in. `recent_sales` maps `Property → Comp` and skips records missing `closePrice`/`closeDate`/`livingArea`/`location`. The synthetic generator remains the demo default; a production integration would need a denser/authoritative attribute source (MLS/DDF, Land Titles, HonestDoor paid API) plugged in via `CompSource`. Playwright/HTML-parsing fallbacks are unnecessary (API reachable) and out of scope.
 
 ### 3.3 No cache; live by design
 The tool queries HonestDoor live at request time and is **re-run to refresh**. No pre-built dataset, no local cache (you cannot pre-cache comps for an address not yet typed). Consequence: the README accuracy figure is a **representative sample-run number** ("~X% over N live sales"), not byte-reproducible.
