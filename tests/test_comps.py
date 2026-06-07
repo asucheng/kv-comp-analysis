@@ -59,3 +59,37 @@ def test_ranking_handles_subject_without_year_built():
     c = _comp("c", 51.051, -114.081, 800_000, date(2026, 5, 1), 2010)  # has year_built=1985
     kept, _ = filter_and_rank(s, [c], Criteria(), as_of=AS_OF)
     assert [x.address for x in kept] == ["c"]
+
+
+# append to tests/test_comps.py
+from mcp_server.comps import find_with_ladder
+from mcp_server.models import FindCompsResult
+
+
+def test_ladder_not_triggered_when_enough():
+    s = _subject()
+    cands = [_comp(f"c{i}", 51.051, -114.081, 800_000 + i, date(2026, 3, 1), 2000 + i)
+             for i in range(4)]
+    res = find_with_ladder(s, cands, Criteria(min_comps=4), as_of=AS_OF)
+    assert isinstance(res, FindCompsResult)
+    assert len(res.comps) == 4
+    assert res.relaxations == []
+
+
+def test_ladder_relaxes_time_first_then_records():
+    s = _subject()
+    # all sold 15 months ago -> excluded at 12mo, included once lookback relaxes to 18
+    cands = [_comp(f"c{i}", 51.051, -114.081, 800_000, date(2025, 3, 1), 2000 + i)
+             for i in range(4)]
+    res = find_with_ladder(s, cands, Criteria(min_comps=4), as_of=AS_OF)
+    assert len(res.comps) == 4
+    assert res.relaxations[0].step == "lookback_months"
+    assert res.relaxations[0].to == 18
+    assert any("relaxed" in f.lower() for f in res.flags)
+
+
+def test_ladder_exhausts_and_returns_what_it_found():
+    s = _subject()
+    res = find_with_ladder(s, [], Criteria(min_comps=4), as_of=AS_OF)
+    assert res.comps == []
+    assert any("insufficient" in f.lower() for f in res.flags)

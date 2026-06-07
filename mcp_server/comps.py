@@ -54,3 +54,49 @@ def filter_and_rank(
         kept.append(c)
     kept.sort(key=lambda c: _similarity_score(subject, c, as_of))
     return kept, flags
+
+
+from mcp_server.models import Relaxation, FindCompsResult
+
+# Ordered widening ladder: (dimension, new_value). Applied cumulatively.
+LADDER: list[tuple[str, float]] = [
+    ("lookback_months", 18), ("lookback_months", 24),
+    ("radius_km", 5.0), ("radius_km", 8.0),
+    ("size_pct", 0.30), ("size_pct", 0.40),
+    ("age_years", 20), ("age_years", 30),
+]
+
+
+def find_with_ladder(
+    subject: Subject, candidates: list[Comp], criteria: Criteria, *, as_of: date
+) -> FindCompsResult:
+    """Filter with Sam's 5; if under min_comps, relax one ladder step at a time."""
+    current = criteria.model_copy()
+    relaxations: list[Relaxation] = []
+    flags: list[str] = []
+
+    kept, _ = filter_and_rank(subject, candidates, current, as_of=as_of)
+    ladder = iter(LADDER)
+    while len(kept) < criteria.min_comps:
+        step = next(ladder, None)
+        if step is None:
+            flags.append(
+                f"Insufficient comps: found {len(kept)} of {criteria.min_comps} "
+                "after exhausting the widening ladder."
+            )
+            break
+        dim, new_val = step
+        old_val = getattr(current, dim)
+        if new_val <= old_val:
+            continue
+        setattr(current, dim, new_val)
+        relaxations.append(Relaxation(step=dim, **{"from": old_val, "to": new_val}))
+        flags.append(f"Relaxed {dim}: {old_val} -> {new_val}")
+        kept, _ = filter_and_rank(subject, candidates, current, as_of=as_of)
+
+    return FindCompsResult(
+        comps=kept,
+        candidates_considered=len(candidates),
+        relaxations=relaxations,
+        flags=flags,
+    )
