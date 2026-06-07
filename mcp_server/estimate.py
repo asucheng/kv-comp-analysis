@@ -1,8 +1,8 @@
 from __future__ import annotations
 from datetime import date
-from statistics import mean
+from statistics import mean, median, pstdev, quantiles
 from mcp_server.models import (
-    Subject, Comp, AdjustmentRules, Adjustment, CompAdjustment,
+    Subject, Comp, AdjustmentRules, Adjustment, CompAdjustment, Estimate, Confidence,
 )
 from mcp_server.comps import months_between
 
@@ -65,3 +65,70 @@ def adjust_comp(
         adjusted_price=round(adjusted_ppsf * subject.sqft, 0),
         weight=0.0,  # filled in during reconciliation
     )
+
+
+def remove_outliers(values: list[float], *, iqr_mult: float = 1.5) -> list[int]:
+    """Return indices of values within median ± iqr_mult*IQR. No-op if < 4 values."""
+    if len(values) < 4:
+        return list(range(len(values)))
+    q1, _, q3 = quantiles(values, n=4)
+    iqr = q3 - q1
+    lo, hi = median(values) - iqr_mult * iqr, median(values) + iqr_mult * iqr
+    return [i for i, v in enumerate(values) if lo <= v <= hi]
+
+
+def comp_weight(subject: Subject, comp: Comp, rules: AdjustmentRules, *, as_of: date) -> float:
+    dist = comp.distance_km if comp.distance_km is not None else 0.0
+    size_pct = abs(comp.sqft - subject.sqft) / subject.sqft
+    age_diff = abs((comp.year_built or subject.year_built) - subject.year_built)
+    months = max(months_between(comp.sold_date, as_of), 0)
+    denom = (1 + rules.weight_a * dist + rules.weight_b * size_pct
+             + rules.weight_c * age_diff + rules.weight_d * months)
+    return round(1 / denom, 4)
+
+
+def _confidence(n: int, cov: float, ladder_depth: int) -> Confidence:
+    if n < 4 or cov > 0.20 or ladder_depth >= 3:
+        return "low"
+    if n >= 6 and cov <= 0.10 and ladder_depth == 0:
+        return "high"
+    return "medium"
+
+
+def reconcile(
+    subject: Subject, comps: list[Comp], rules: AdjustmentRules, *,
+    as_of: date, ladder_depth: int = 0,
+) -> Estimate:
+    notes: list[str] = []
+    trend = estimate_trend(comps, rules, as_of=as_of)
+    notes.append(f"Market trend applied: {trend*100:.2f}%/mo")
+    adjusted = [adjust_comp(subject, c, rules, trend=trend, as_of=as_of) for c in comps]
+
+    kept_idx = remove_outliers([ca.adjusted_ppsf for ca in adjusted],
+                               iqr_mult=rules.outlier_iqr)
+    if len(kept_idx) < len(adjusted):
+        notes.append(f"Dropped {len(adjusted) - len(kept_idx)} outlier comp(s)")
+    kept = [adjusted[i] for i in kept_idx]
+    kept_comps = [comps[i] for i in kept_idx]
+
+    for ca, c in zip(kept, kept_comps):
+        ca.weight = comp_weight(subject, c, rules, as_of=as_of)
+
+    wsum = sum(ca.weight for ca in kept) or 1.0
+    reconciled_ppsf = sum(ca.adjusted_ppsf * ca.weight for ca in kept) / wsum
+    point = round(reconciled_ppsf * subject.sqft, 0)
+
+    ppsf_vals = sorted(ca.adjusted_ppsf for ca in kept)
+    if len(ppsf_vals) >= 4:
+        q1, _, q3 = quantiles(ppsf_vals, n=4)
+    else:
+        q1, q3 = ppsf_vals[0], ppsf_vals[-1]
+    low, high = round(q1 * subject.sqft, 0), round(q3 * subject.sqft, 0)
+
+    m = mean(ppsf_vals)
+    cov = (pstdev(ppsf_vals) / m) if (len(ppsf_vals) > 1 and m) else 0.0
+    conf = _confidence(len(kept), cov, ladder_depth)
+    notes.append(f"{len(kept)} comps, $/sqft CoV {cov:.2f}, ladder depth {ladder_depth}")
+
+    return Estimate(point=point, low=low, high=high, confidence=conf,
+                    per_comp=kept, method_notes=notes)
