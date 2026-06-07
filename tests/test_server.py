@@ -50,3 +50,10 @@ def test_find_comps_raises_clear_error_when_subject_missing_geo():
         TOOLS.find_comps(s)
     msg = str(exc.value).lower()
     assert "lat" in msg and "sqft" in msg
+
+
+def test_relaxation_serializes_with_from_alias():
+    from mcp_server.models import Relaxation
+    r = Relaxation(step="radius_km", **{"from": 3.0, "to": 5.0})
+    d = r.model_dump(by_alias=True)
+    assert d == {"step": "radius_km", "from": 3.0, "to": 5.0}

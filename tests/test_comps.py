@@ -93,3 +93,11 @@ def test_ladder_exhausts_and_returns_what_it_found():
     res = find_with_ladder(s, [], Criteria(min_comps=4), as_of=AS_OF)
     assert res.comps == []
     assert any("insufficient" in f.lower() for f in res.flags)
+
+
+def test_filter_does_not_mutate_input_comps():
+    s = _subject()
+    original = _comp("c", 51.051, -114.081, 800_000, date(2026, 3, 1), 2010)
+    kept, _ = filter_and_rank(s, [original], Criteria(), as_of=AS_OF)
+    assert original.distance_km is None and original.include_reason is None
+    assert kept[0].distance_km is not None  # the returned copy IS annotated

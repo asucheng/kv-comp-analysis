@@ -46,12 +46,13 @@ def filter_and_rank(
             continue
         if criteria.match_beds and c.beds != subject.beds:
             continue
-        c.distance_km = dist
-        c.include_reason = (
+        kept_c = c.model_copy()
+        kept_c.distance_km = dist
+        kept_c.include_reason = (
             f"{dist:.1f} km, {size_diff * 100:+.0f}% size, {months} mo ago"
             + (f", Δage {age_diff} yr" if age_diff is not None else "")
         )
-        kept.append(c)
+        kept.append(kept_c)
     kept.sort(key=lambda c: _similarity_score(subject, c, as_of))
     return kept, flags
 

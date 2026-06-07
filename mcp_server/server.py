@@ -99,7 +99,7 @@ def main() -> None:
         rules (radius, size, recency, age; ranked by similarity). Applies a widening
         ladder if too few. Takes the subject object from get_subject."""
         crit = Criteria(**criteria) if criteria else Criteria()
-        return tools.find_comps(Subject(**subject), crit).model_dump()
+        return tools.find_comps(Subject(**subject), crit).model_dump(by_alias=True)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": False})
     def estimate_value(subject: dict, comps: list, rules: Optional[dict] = None,
