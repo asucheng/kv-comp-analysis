@@ -19,7 +19,7 @@ class Subject(BaseModel):
     lot_sf: Optional[float] = None
     property_type: Optional[PropertyType] = None
     hd_estimate: Optional[float] = None
-    # field name -> "user" | "honestdoor" | "missing"
+    # field name -> "user" | "honestdoor" | "geocoded" | "missing"
     provenance: dict[str, str] = Field(default_factory=dict)
 
 
