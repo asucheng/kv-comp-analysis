@@ -6,7 +6,8 @@ from mcp_server.models import (
     Subject, FindCompsResult, Estimate, CrossCheck, Criteria, AdjustmentRules,
 )
 from mcp_server.compsource.base import CompSource
-from mcp_server.compsource.synthetic import SyntheticCompSource
+from mcp_server.compsource.honestdoor import HonestDoorCompSource
+from mcp_server.geocode import Geocoder, NominatimGeocoder
 from mcp_server.comps import find_with_ladder
 from mcp_server.estimate import reconcile
 
@@ -23,6 +24,7 @@ class Tools:
     and reused directly in tests (no transport needed)."""
     source: CompSource
     as_of: date
+    geocoder: Optional[Geocoder] = None
 
     def get_subject(self, address: str, overrides: Optional[dict] = None) -> Subject:
         overrides = overrides or {}
@@ -36,6 +38,14 @@ class Tools:
                 data[f] = getattr(rec, f); provenance[f] = "honestdoor"
             else:
                 provenance[f] = "missing"
+        # The public HonestDoor API has no address->record lookup, so resolve the
+        # subject's coordinates from the address via the geocoder when missing.
+        if (self.geocoder and provenance.get("lat") == "missing"
+                and provenance.get("lng") == "missing"):
+            coords = self.geocoder.geocode(address)
+            if coords:
+                data["lat"], data["lng"] = coords
+                provenance["lat"] = provenance["lng"] = "geocoded"
         data["hd_estimate"] = rec.hd_estimate
         data["provenance"] = provenance
         return Subject(**data)
@@ -80,14 +90,19 @@ class Tools:
                           verdict=verdict, notes=notes)
 
 
-def build_tools(source: Optional[CompSource] = None, as_of: Optional[date] = None) -> Tools:
-    return Tools(source=source or SyntheticCompSource(), as_of=as_of or date.today())
+def build_tools(source: Optional[CompSource] = None, geocoder: Optional[Geocoder] = None,
+                as_of: Optional[date] = None) -> Tools:
+    return Tools(
+        source=source or HonestDoorCompSource(),
+        geocoder=geocoder if geocoder is not None else NominatimGeocoder(),
+        as_of=as_of or date.today(),
+    )
 
 
 def main() -> None:
     """Console entry point: register the tools with FastMCP over stdio."""
     from fastmcp import FastMCP
-    tools = build_tools(source=SyntheticCompSource())  # swap to HonestDoorCompSource() when live
+    tools = build_tools()  # live HonestDoor data + Nominatim geocoder
     mcp = FastMCP("kv-comp-analysis")
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True})

@@ -13,11 +13,13 @@ underwriter-style value estimate — and can learn each underwriter's own method
 
 ## Data & honesty
 Alberta sold prices are confidential on MLS, and municipal assessments lack sqft/beds/baths
-and are valuations, not sales. The demo sources comps from **HonestDoor public data**
-(real sold price/date + attributes), with a **synthetic, real-grounded fallback** for thin
-areas / new construction. The HonestDoor headline price is an **AVM estimate, not a sale** —
-the agent only treats Sold History as a real transaction. The data source is **pluggable**
-(`CompSource`): KV can swap in MLS/DDF, Land Titles, or internal deal records.
+and are valuations, not sales. Comps come from **real HonestDoor public data** via its
+GraphQL backend — unauthenticated, with real sold price/date + living area/beds/baths/year.
+The subject's coordinates are resolved from its address with a free **OpenStreetMap/Nominatim
+geocoder** (the public HonestDoor API has no address→record lookup). The HonestDoor headline
+price is an **AVM estimate, not a sale** — the agent only treats Sold History as a real
+transaction. The data source is **pluggable** (`CompSource`): KV can swap in MLS/DDF, Land
+Titles, or internal deal records.
 
 ## Install (local, no hosting)
 ```bash
@@ -42,14 +44,14 @@ The agent resolves the subject, finds and curates comps, estimates value with an
 grid, cross-checks against the AVM/assessment, and walks you through the file.
 
 ## Accuracy
-Hold-one-out backtest against real sold prices:
+Hold-one-out backtest against real HonestDoor sold prices (live network call):
 ```bash
 python -c "from datetime import date; from eval.backtest import hold_one_out; \
-from mcp_server.compsource.synthetic import SyntheticCompSource; \
-r=hold_one_out(SyntheticCompSource(seed=1), lat=51.05, lng=-114.07, as_of=date(2026,6,1)); \
+from mcp_server.compsource.honestdoor import HonestDoorCompSource; \
+r=hold_one_out(HonestDoorCompSource(), lat=51.05, lng=-114.07, as_of=date.today()); \
 print(f'median abs error {r.median_abs_pct_error}% over {r.n} sales')"
 ```
-(Swap in `HonestDoorCompSource()` for a live real-data number — a representative sample-run figure.)
+(A representative sample-run figure — comps refresh live, so it is not byte-reproducible.)
 
 ## Tests
 ```bash

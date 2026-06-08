@@ -56,18 +56,18 @@ https://www.honestdoor.com/recently-sold/ab/calgary/{community}
 - `Property` fields: `fullAddress, neighbourhood, city, yearBuilt, livingArea, bedroomsTotal, bathroomsTotal, closePrice, closeDate, taxAssessedValue, predictedValue` (AVM), `lotSizeArea, location { lat lon }, slug`.
 - Filters: `getProperties(filter: { neighbourhoodName })`; `getProperty(filter: { slug })`.
 
-**REAL-DATA LIMITATIONS (decisive — keep synthetic as demo default):**
-1. **Attribute sparsity** — in the bulk `getProperties` feed, `livingArea`/`yearBuilt`/`beds`/`baths`/`fullAddress` are NULL for ~90% of records; only `closePrice`/`closeDate`/`predictedValue`/`location` are reliably present. No `livingArea` ⇒ no $/sqft (Sam's core metric).
-2. **No address lookup** — `getProperty` is **slug-only**; no verified address→record search, so subject resolution by raw address isn't supported by the public API.
-3. **`neighbourhoodName` is not geo-scoped** — filtering "Roxboro" returned Moncton, NB properties. (Mitigated downstream: `find_comps`' haversine radius filter drops cross-province noise.)
+**REAL-DATA NOTES (re-verified 2026-06-08 — real data is now the only source):**
+1. **Attributes are dense on the `getListings2` bbox query we use.** The "~90% NULL" sparsity earlier recorded was for the bulk `getProperties` neighbourhood feed, **not** the bbox `getListings2` query. Live probe (50-row bbox over downtown Calgary): `livingArea` 40/50, beds 39/50, baths 40/50, yearBuilt 42/50, and `soldPrice`+`soldDate` 28/50. After `recent_sales` filters to completed SALEs with price+date+livingArea+location, that is ~20–28 usable real comps per query — sufficient for Sam's $/sqft method.
+2. **No address lookup** — `getProperty` is **slug-only**; no address→record search. **Resolved** by geocoding the subject address → lat/lng with OSM/Nominatim (`mcp_server/geocode.py`); attributes the user knows (sqft/year/beds/baths) come via overrides.
+3. **`neighbourhoodName` is not geo-scoped** — filtering "Roxboro" returned Moncton, NB properties. Avoided entirely: we enumerate by bbox + haversine radius, never by neighbourhood name.
 
-**Conclusion:** schema is real and the adapter now uses the verified field names, but the public feed is **real-but-partial** — not a drop-in. `recent_sales` maps `Property → Comp` and skips records missing `closePrice`/`closeDate`/`livingArea`/`location`. The synthetic generator remains the demo default; a production integration would need a denser/authoritative attribute source (MLS/DDF, Land Titles, HonestDoor paid API) plugged in via `CompSource`. Playwright/HTML-parsing fallbacks are unnecessary (API reachable) and out of scope.
+**Conclusion:** the public feed is **real and good enough** — `HonestDoorCompSource` + the Nominatim geocoder are the default and only data path. The synthetic generator has been **removed**; a production integration could still plug a denser/authoritative source (MLS/DDF, Land Titles, HonestDoor paid API) into the same `CompSource` interface. Playwright/HTML-parsing fallbacks are unnecessary (API reachable) and out of scope.
 
 ### 3.3 No cache; live by design
 The tool queries HonestDoor live at request time and is **re-run to refresh**. No pre-built dataset, no local cache (you cannot pre-cache comps for an address not yet typed). Consequence: the README accuracy figure is a **representative sample-run number** ("~X% over N live sales"), not byte-reproducible.
 
-### 3.4 Fallback & extension
-- **Synthetic** comps used **only as a fallback** for thin areas / brand-new construction not yet on HonestDoor.
+### 3.4 Subject resolution & extension
+- **Subject geocoding** — the subject address is resolved to lat/lng via OSM/Nominatim (free, no key, low-volume); user-supplied overrides win. Thin areas / brand-new construction simply return fewer comps (surfaced via the widening-ladder flags), rather than being masked by synthetic data.
 - Pluggable `CompSource` interface so KV can later swap in **MLS/DDF, Land Titles/SPIN, HonestDoor's paid API, or internal deal records.**
 
 ## 4. Architecture

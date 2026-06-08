@@ -23,7 +23,7 @@ class PropertyRecord(BaseModel):
 
 
 class CompSource(ABC):
-    """Pluggable data source. Implementations: synthetic, HonestDoor, MLS, internal."""
+    """Pluggable data source. Implementations: HonestDoor, MLS, internal."""
 
     @abstractmethod
     def get_property(self, address: str) -> PropertyRecord:
