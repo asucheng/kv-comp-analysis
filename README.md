@@ -23,21 +23,107 @@ in HonestDoor. The HonestDoor headline price (`predictedValue`) is an **AVM esti
 sale** — the agent only treats Sold History as a real transaction. The data source is **pluggable** (`CompSource`): KV can swap in MLS/DDF, Land
 Titles, or internal deal records.
 
-## Install (local, no hosting)
+## Setup on Claude Desktop (step by step)
+
+Local, no hosting — the MCP server runs as a subprocess that Claude Desktop launches for
+you. Three pieces have to be wired up: the **server code** (installed from this repo), the
+**MCP registration** (in your Desktop config), and the **skill** (copied into your skills
+folder). Follow all six steps once, then it just works.
+
+### Prerequisites (dependencies)
+- **Python ≥ 3.11** — check with `python3 --version`
+- **git**
+- **Claude Desktop** installed and signed in
+- The Python packages `fastmcp`, `pydantic`, `httpx` — installed automatically in step 2,
+  no manual action needed. Network access is required at runtime (the server calls
+  HonestDoor's public GraphQL API and OpenStreetMap/Nominatim).
+
+### 1. Clone the repo
 ```bash
-python -m venv .venv && . .venv/bin/activate
-pip install -e .
+git clone https://github.com/asucheng/kv-comp-analysis.git
+cd kv-comp-analysis
 ```
 
-Register with Claude Desktop (`claude_desktop_config.json`):
+### 2. Create a virtual environment and install
+```bash
+# macOS / Linux
+python3 -m venv .venv && . .venv/bin/activate
+pip install -e .
+```
+```powershell
+# Windows (PowerShell)
+py -m venv .venv ; .\.venv\Scripts\Activate.ps1
+pip install -e .
+```
+`pip install -e .` pulls in all dependencies and creates the `kv-comp-analysis` launcher
+inside `.venv`. (Editable install means Claude always runs your current code — `git pull`
+updates take effect on the next Desktop restart, no reinstall.)
+
+### 3. Get the absolute path to the launcher
+Claude Desktop does **not** see your activated venv, so you must register the launcher by
+its **full path**, not its bare name. Print it (venv still activated):
+```bash
+which kv-comp-analysis      # macOS / Linux  → e.g. /home/you/kv-comp-analysis/.venv/bin/kv-comp-analysis
+```
+```powershell
+where.exe kv-comp-analysis  # Windows        → e.g. C:\Users\you\kv-comp-analysis\.venv\Scripts\kv-comp-analysis.exe
+```
+Copy that path for the next step.
+
+### 4. Register the MCP server in your Claude Desktop config
+Open (create if missing) `claude_desktop_config.json`:
+| OS | Path |
+|----|------|
+| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Linux | `~/.config/Claude/claude_desktop_config.json` |
+| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
+
+Add the server, using the **path from step 3** as `command` (keep any existing
+`mcpServers` entries):
 ```json
 {
   "mcpServers": {
-    "kv-comp-analysis": { "command": "kv-comp-analysis" }
+    "kv-comp-analysis": {
+      "command": "/absolute/path/from/step/3/.venv/bin/kv-comp-analysis"
+    }
   }
 }
 ```
-Copy `skill/comp-analysis/` into your Claude Desktop skills directory. Restart Claude Desktop.
+> Windows: use double backslashes in the path, e.g.
+> `"C:\\Users\\you\\kv-comp-analysis\\.venv\\Scripts\\kv-comp-analysis.exe"`.
+
+### 5. Install the skill
+Copy the skill from the repo into your Claude skills directory:
+```bash
+# macOS / Linux
+mkdir -p ~/.claude/skills
+cp -r skill/comp-analysis ~/.claude/skills/comp-analysis
+```
+```powershell
+# Windows (PowerShell)
+mkdir $env:USERPROFILE\.claude\skills -Force
+Copy-Item -Recurse skill\comp-analysis $env:USERPROFILE\.claude\skills\comp-analysis
+```
+
+### 6. Fully restart Claude Desktop
+**Quit completely** (not just close the window — on Linux/Windows it keeps running in the
+background) and relaunch, so it spawns the server and loads the skill.
+
+### Verify it worked
+In a **new** chat, ask:
+> "Run a comp analysis on 122 Auburn Bay Heights SE, Auburn Bay, Calgary."
+
+It should resolve the subject (sqft, beds, baths, year) and proceed to comps — not ask you
+for the square footage. If it does ask, see **Troubleshooting** below.
+
+### Troubleshooting
+- **"MCP server failed to start" / tools missing** — the `command` path is wrong or not
+  absolute. Re-run step 3 and paste the exact path; confirm the file exists.
+- **It keeps asking for square footage** — usually the running process predates a code
+  change, or the chat cached a pre-fix result. Fully restart Desktop (step 6) **and** start
+  a **new** conversation (an existing chat reuses the subject it already resolved).
+- **Skill not triggering** — confirm `~/.claude/skills/comp-analysis/SKILL.md` exists and
+  you restarted Desktop.
 
 ## Use
 > "Run a comp analysis on 123 Maple Dr, Roxboro, Calgary — it's a 2,000 sqft detached built 1985."
