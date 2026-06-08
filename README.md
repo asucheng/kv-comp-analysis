@@ -15,10 +15,12 @@ underwriter-style value estimate — and can learn each underwriter's own method
 Alberta sold prices are confidential on MLS, and municipal assessments lack sqft/beds/baths
 and are valuations, not sales. Comps come from **real HonestDoor public data** via its
 GraphQL backend — unauthenticated, with real sold price/date + living area/beds/baths/year.
-The subject's coordinates are resolved from its address with a free **OpenStreetMap/Nominatim
-geocoder** (the public HonestDoor API has no address→record lookup). The HonestDoor headline
-price is an **AVM estimate, not a sale** — the agent only treats Sold History as a real
-transaction. The data source is **pluggable** (`CompSource`): KV can swap in MLS/DDF, Land
+The subject's own attributes (sqft/beds/baths/year/coordinates) resolve from its address by
+**deriving the HonestDoor slug** and querying `getProperty` — the public API has no
+address-text search, but the slug is constructable from the address. A free
+**OpenStreetMap/Nominatim geocoder** remains as a coordinate fallback when the subject isn't
+in HonestDoor. The HonestDoor headline price (`predictedValue`) is an **AVM estimate, not a
+sale** — the agent only treats Sold History as a real transaction. The data source is **pluggable** (`CompSource`): KV can swap in MLS/DDF, Land
 Titles, or internal deal records.
 
 ## Install (local, no hosting)
