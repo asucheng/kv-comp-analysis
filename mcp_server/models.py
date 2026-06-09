@@ -16,6 +16,7 @@ class Subject(BaseModel):
     year_built: Optional[int] = None
     beds: Optional[float] = None
     baths: Optional[float] = None
+    garage: Optional[int] = None     # garage spaces (HonestDoor garageSpaces; often unknown)
     lot_sf: Optional[float] = None
     property_type: Optional[PropertyType] = None
     hd_estimate: Optional[float] = None
@@ -32,6 +33,7 @@ class Comp(BaseModel):
     sqft: float
     beds: Optional[float] = None
     baths: Optional[float] = None
+    garage: Optional[int] = None     # garage spaces (HonestDoor garageSpaces; often unknown)
     year_built: Optional[int] = None
     property_type: Optional[PropertyType] = None
     distance_km: Optional[float] = None
@@ -50,6 +52,8 @@ class Criteria(BaseModel):
     age_years: int = 10
     match_type: bool = False
     match_beds: bool = False
+    match_baths: bool = False
+    match_garage: bool = False
     min_comps: int = 4
 
 

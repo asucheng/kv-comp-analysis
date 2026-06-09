@@ -21,6 +21,12 @@ def _similarity_score(subject: Subject, c: Comp, as_of: date) -> float:
     return dist / 10 + size_diff + age_diff / 20 + months / 24
 
 
+def _attr_mismatch(subj_val, comp_val) -> bool:
+    """True only when BOTH values are known and differ — so a missing bed/bath/garage
+    value never silently drops a comp (garage in particular is often unknown)."""
+    return subj_val is not None and comp_val is not None and subj_val != comp_val
+
+
 def filter_and_rank(
     subject: Subject, candidates: list[Comp], criteria: Criteria, *, as_of: date
 ) -> tuple[list[Comp], list[str]]:
@@ -44,7 +50,11 @@ def filter_and_rank(
                 continue
         if criteria.match_type and c.property_type != subject.property_type:
             continue
-        if criteria.match_beds and c.beds != subject.beds:
+        if criteria.match_beds and _attr_mismatch(subject.beds, c.beds):
+            continue
+        if criteria.match_baths and _attr_mismatch(subject.baths, c.baths):
+            continue
+        if criteria.match_garage and _attr_mismatch(subject.garage, c.garage):
             continue
         kept_c = c.model_copy()
         kept_c.distance_km = dist
@@ -77,6 +87,13 @@ def find_with_ladder(
     current = criteria.model_copy()
     relaxations: list[Relaxation] = []
     flags: list[str] = []
+
+    # Honesty: if an exact-match toggle is on but the subject's value is unknown, the
+    # constraint can't be applied — say so rather than appearing to enforce it.
+    for attr, on in (("beds", criteria.match_beds), ("baths", criteria.match_baths),
+                     ("garage", criteria.match_garage)):
+        if on and getattr(subject, attr) is None:
+            flags.append(f"{attr} match requested but subject {attr} unknown — constraint skipped")
 
     kept, _ = filter_and_rank(subject, candidates, current, as_of=as_of)
     ladder = iter(LADDER)

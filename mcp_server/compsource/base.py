@@ -16,6 +16,7 @@ class PropertyRecord(BaseModel):
     year_built: Optional[int] = None
     beds: Optional[float] = None
     baths: Optional[float] = None
+    garage: Optional[int] = None     # garage spaces (HonestDoor garageSpaces; often unknown)
     lot_sf: Optional[float] = None
     property_type: Optional[PropertyType] = None
     hd_estimate: Optional[float] = None        # AVM estimate (NOT a sale)
