@@ -9,6 +9,8 @@ from mcp_server.models import Comp, PropertyType
 class PropertyRecord(BaseModel):
     """Raw attributes for a single property from a data source."""
     address: str
+    slug: Optional[str] = None                 # source's canonical id, if any
+    resolved_address: Optional[str] = None     # readable address the source matched
     community: Optional[str] = None
     lat: Optional[float] = None
     lng: Optional[float] = None
@@ -27,8 +29,15 @@ class CompSource(ABC):
     """Pluggable data source. Implementations: HonestDoor, MLS, internal."""
 
     @abstractmethod
+    def search_subject(self, address: str) -> list[PropertyRecord]:
+        """Resolve a subject from free address text: ranked candidates, best first.
+        Fuzzy sources never assert an exact match, so the caller confirms; an empty
+        list means nothing matched at all."""
+
     def get_property(self, address: str) -> PropertyRecord:
-        """Resolve a single subject property's attributes."""
+        """Best-match record for an address (the top search hit), or an empty record."""
+        recs = self.search_subject(address)
+        return recs[0] if recs else PropertyRecord(address=address)
 
     @abstractmethod
     def recent_sales(self, *, lat: float, lng: float, radius_km: float,

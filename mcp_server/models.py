@@ -22,6 +22,10 @@ class Subject(BaseModel):
     hd_estimate: Optional[float] = None
     # field name -> "user" | "honestdoor" | "geocoded" | "missing"
     provenance: dict[str, str] = Field(default_factory=dict)
+    # address the data source matched (top hit) + other near matches; the agent
+    # confirms `resolved_address` against the user's input before valuing.
+    resolved_address: Optional[str] = None
+    match_candidates: list[str] = Field(default_factory=list)
 
 
 class Comp(BaseModel):

@@ -19,15 +19,16 @@ class StubGeocoder:
 
 
 class StubCompSource(CompSource):
-    """Mirrors HonestDoor: no address->record lookup, plus a tight cluster of
-    nearby sold comps that survive the default criteria around a ~1800 sqft,
-    ~2000-built detached subject."""
+    """Mirrors HonestDoor: a fuzzy subject search (returns the injected ranked
+    `matches`, or nothing) plus a tight cluster of nearby sold comps that survive
+    the default criteria around a ~1800 sqft, ~2000-built detached subject."""
 
-    def __init__(self, n: int = 12):
+    def __init__(self, n: int = 12, matches: Optional[list[PropertyRecord]] = None):
         self._n = n
+        self._matches = matches or []
 
-    def get_property(self, address: str) -> PropertyRecord:
-        return PropertyRecord(address=address)  # like HonestDoor: empty
+    def search_subject(self, address: str) -> list[PropertyRecord]:
+        return list(self._matches)  # [] => like HonestDoor with no match
 
     def recent_sales(self, *, lat: float, lng: float, radius_km: float,
                      lookback_months: int, as_of: date) -> list[Comp]:

@@ -5,7 +5,7 @@ from typing import Optional
 from mcp_server.models import (
     Subject, FindCompsResult, Estimate, CrossCheck, Criteria, AdjustmentRules,
 )
-from mcp_server.compsource.base import CompSource
+from mcp_server.compsource.base import CompSource, PropertyRecord
 from mcp_server.compsource.honestdoor import HonestDoorCompSource
 from mcp_server.geocode import Geocoder, NominatimGeocoder
 from mcp_server.comps import find_with_ladder
@@ -28,7 +28,11 @@ class Tools:
 
     def get_subject(self, address: str, overrides: Optional[dict] = None) -> Subject:
         overrides = overrides or {}
-        rec = self.source.get_property(address)
+        # Fuzzy text search => ranked candidates (best first). Take the top hit's
+        # attributes; the agent confirms `resolved_address` before valuing.
+        candidates = self.source.search_subject(address)
+        top = candidates[0] if candidates else None
+        rec = top or PropertyRecord(address=address)
         data = {"address": address}
         provenance: dict[str, str] = {}
         for f in _SUBJECT_FIELDS:
@@ -38,8 +42,7 @@ class Tools:
                 data[f] = getattr(rec, f); provenance[f] = "honestdoor"
             else:
                 provenance[f] = "missing"
-        # The public HonestDoor API has no address->record lookup, so resolve the
-        # subject's coordinates from the address via the geocoder when missing.
+        # Fall back to the geocoder for coordinates when the source had no match.
         if (self.geocoder and provenance.get("lat") == "missing"
                 and provenance.get("lng") == "missing"):
             coords = self.geocoder.geocode(address)
@@ -48,6 +51,9 @@ class Tools:
                 provenance["lat"] = provenance["lng"] = "geocoded"
         data["hd_estimate"] = rec.hd_estimate
         data["provenance"] = provenance
+        data["resolved_address"] = top.resolved_address if top else None
+        data["match_candidates"] = [c.resolved_address for c in candidates[1:5]
+                                    if c.resolved_address]
         return Subject(**data)
 
     @staticmethod
@@ -107,9 +113,12 @@ def main() -> None:
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True})
     def get_subject(address: str, overrides: Optional[dict] = None) -> dict:
-        """Resolve a residential subject property: auto-fill attributes from the data
-        source and mark each field's provenance (user|honestdoor|missing). If you only
-        have an address, call this first. Returns subject attributes, not a valuation."""
+        """Resolve a residential subject from an address by searching the data source.
+        Auto-fills attributes from the best-match property and marks each field's
+        provenance (user|honestdoor|missing). Search is fuzzy: ALWAYS confirm the
+        returned `resolved_address` matches the user's intended address before valuing —
+        if it differs, is ambiguous, or is null, ask the user to approve or correct it
+        (`match_candidates` lists other near matches). Returns attributes, not a value."""
         return tools.get_subject(address, overrides).model_dump()
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True})
