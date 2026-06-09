@@ -21,6 +21,8 @@ class Subject(BaseModel):
     hd_estimate: Optional[float] = None
     # field name -> "user" | "honestdoor" | "geocoded" | "missing"
     provenance: dict[str, str] = Field(default_factory=dict)
+    # resolution caveats for the agent to surface (e.g. no exact data-source match)
+    warnings: list[str] = Field(default_factory=list)
 
 
 class Comp(BaseModel):

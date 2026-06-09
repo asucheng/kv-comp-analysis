@@ -48,6 +48,16 @@ class Tools:
                 provenance["lat"] = provenance["lng"] = "geocoded"
         data["hd_estimate"] = rec.hd_estimate
         data["provenance"] = provenance
+        # No field resolved from the data source (geocoded coords / user overrides
+        # don't count) => the address didn't match any record. Warn so the agent can
+        # tell the user it's likely unlisted or mistyped, rather than silently asking
+        # for attributes one by one.
+        if not any(p == "honestdoor" for p in provenance.values()):
+            data["warnings"] = [
+                f"No exact match for '{address}' in the data source (HonestDoor). "
+                "The property may not be listed there, or the address may be mistyped — "
+                "verify the address, or provide the property's attributes directly."
+            ]
         return Subject(**data)
 
     @staticmethod
@@ -109,7 +119,9 @@ def main() -> None:
     def get_subject(address: str, overrides: Optional[dict] = None) -> dict:
         """Resolve a residential subject property: auto-fill attributes from the data
         source and mark each field's provenance (user|honestdoor|missing). If you only
-        have an address, call this first. Returns subject attributes, not a valuation."""
+        have an address, call this first. Returns subject attributes, not a valuation.
+        Check `warnings`: if the address had no exact match in the data source, relay
+        that to the user (likely unlisted or mistyped) before proceeding."""
         return tools.get_subject(address, overrides).model_dump()
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True})

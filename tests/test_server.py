@@ -28,6 +28,23 @@ def test_get_subject_marks_missing_when_unresolvable():
     assert s.provenance["year_built"] == "missing"
 
 
+def test_get_subject_warns_when_no_source_match():
+    # stub source returns an empty record => no honestdoor-sourced field => warn
+    s = TOOLS.get_subject("123 Maple Dr, Calgary", overrides={"sqft": 1800})
+    assert s.warnings and any("no exact match" in w.lower() for w in s.warnings)
+
+
+def test_get_subject_no_warning_when_source_matches():
+    from mcp_server.compsource.base import PropertyRecord
+    rec = PropertyRecord(address="x", sqft=1450, year_built=2006, beds=2, baths=2.1,
+                         lat=50.88, lng=-113.96, hd_estimate=537100, community="Auburn Bay")
+    tools = build_tools(source=StubCompSource(record=rec),
+                        geocoder=StubGeocoder((51.05, -114.07)), as_of=date(2026, 6, 1))
+    s = tools.get_subject("122 Auburn Bay Heights SE")
+    assert s.sqft == 1450 and s.provenance["sqft"] == "honestdoor"
+    assert s.warnings == []
+
+
 def test_find_comps_returns_filtered_result():
     s = TOOLS.get_subject("123 Maple Dr, Calgary", overrides=SUBJECT_OVERRIDES)
     res = TOOLS.find_comps(s)

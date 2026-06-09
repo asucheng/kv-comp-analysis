@@ -23,11 +23,14 @@ class StubCompSource(CompSource):
     nearby sold comps that survive the default criteria around a ~1800 sqft,
     ~2000-built detached subject."""
 
-    def __init__(self, n: int = 12):
+    def __init__(self, n: int = 12, record: Optional[PropertyRecord] = None):
         self._n = n
+        self._record = record
 
     def get_property(self, address: str) -> PropertyRecord:
-        return PropertyRecord(address=address)  # like HonestDoor: empty
+        if self._record is not None:  # simulate an exact data-source match
+            return self._record.model_copy(update={"address": address})
+        return PropertyRecord(address=address)  # like HonestDoor: empty (no match)
 
     def recent_sales(self, *, lat: float, lng: float, radius_km: float,
                      lookback_months: int, as_of: date) -> list[Comp]:
