@@ -136,6 +136,46 @@ def test_ladder_exhausts_and_returns_what_it_found():
     assert any("insufficient" in f.lower() for f in res.flags)
 
 
+def test_radius_is_a_hard_limit_never_widened():
+    s = _subject()
+    # all comps sit ~4 km out — outside Sam's 3 km hard limit
+    far = [_comp(f"f{i}", 51.05 + 0.036, -114.08, 800_000, date(2026, 3, 1), 2000)
+           for i in range(6)]
+    res = find_with_ladder(s, far, Criteria(min_comps=4), as_of=AS_OF)
+    assert res.comps == []
+    assert all(r.step != "radius_km" for r in res.relaxations)
+    assert any("insufficient" in f.lower() for f in res.flags)
+
+
+def test_size_is_a_hard_limit_never_widened():
+    s = _subject()   # 2000 sqft
+    big = [_comp(f"b{i}", 51.051, -114.081, 800_000, date(2026, 3, 1), 2700)  # +35%
+           for i in range(6)]
+    res = find_with_ladder(s, big, Criteria(min_comps=4), as_of=AS_OF)
+    assert res.comps == []
+    assert all(r.step != "size_pct" for r in res.relaxations)
+
+
+def test_age_is_a_hard_limit_never_widened():
+    s = _subject()   # year_built 1985
+    old = [_comp(f"o{i}", 51.051, -114.081, 800_000, date(2026, 3, 1), 2000, yb=1960)  # 25 yr
+           for i in range(6)]
+    res = find_with_ladder(s, old, Criteria(min_comps=4), as_of=AS_OF)
+    assert res.comps == []
+    assert all(r.step != "age_years" for r in res.relaxations)
+
+
+def test_ladder_relaxes_garage_toggle_when_short():
+    s = _subject(garage=2)
+    # qualify on every hard rule but differ on garage (known mismatch) — only a
+    # toggle relaxation can recover them
+    cands = [_comp(f"c{i}", 51.051, -114.081, 800_000, date(2026, 3, 1), 2000 + i, garage=1)
+             for i in range(4)]
+    res = find_with_ladder(s, cands, Criteria(min_comps=4), as_of=AS_OF)
+    assert len(res.comps) == 4
+    assert any(r.step == "match_garage" and r.to is False for r in res.relaxations)
+
+
 def test_filter_does_not_mutate_input_comps():
     s = _subject()
     original = _comp("c", 51.051, -114.081, 800_000, date(2026, 3, 1), 2010)

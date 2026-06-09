@@ -15,13 +15,14 @@ _HEADERS = {"Content-Type": "application/json", "User-Agent": "Mozilla/5.0"}
 # a geographic bounding box (the API has no radius filter); the caller's haversine
 # filter then trims to the precise radius.
 _LISTINGS_QUERY = (
-    "query($filter: Listings2ExtendedFilterInput, $take: Int){ "
-    "getListings2(take: $take, filter: $filter){ "
+    "query($filter: Listings2ExtendedFilterInput, $take: Int, $skip: Int, $order: Listing2OrderInput){ "
+    "getListings2(take: $take, skip: $skip, filter: $filter, order: $order){ "
     "soldPrice soldDate status type "
     "address { streetNumber streetName city neighborhood } "
     "property { livingArea bedroomsTotal bathroomsTotal garageSpaces yearBuilt location { lat lon } } } }"
 )
-_TAKE = 300
+_TAKE = 300                # rows per page (server cap); recent_sales paginates past it
+_MAX_PAGES = 40           # safety stop (~12k rows) — a 3km×12mo window never approaches this
 
 # Resolve a subject by ADDRESS TEXT via getMultiSearch (the website's own search).
 # It's fuzzy and ranked — always returns candidates and never flags an exact match —
@@ -75,6 +76,15 @@ def multisearch_item_to_record(item: dict[str, Any]) -> PropertyRecord:
 
 def _parse_iso_date(s: str) -> date:
     return datetime.fromisoformat(s.replace("Z", "+00:00")).date()
+
+
+def _months_before(d: date, months: int) -> date:
+    """The date `months` whole months before `d`, clamping the day for short months."""
+    import calendar
+    m = d.month - 1 - months
+    y = d.year + m // 12
+    m = m % 12 + 1
+    return date(y, m, min(d.day, calendar.monthrange(y, m)[1]))
 
 
 def listing_to_comp(row: dict[str, Any]) -> Optional[Comp]:
@@ -141,8 +151,22 @@ class HonestDoorCompSource(CompSource):
 
     def recent_sales(self, *, lat: float, lng: float, radius_km: float,
                      lookback_months: int, as_of: date) -> list[Comp]:
+        # Enumerate the COMPLETE pool inside the bbox within the recency window:
+        # the API caps each page at ~_TAKE non-spatially, so we bound the set with a
+        # server-side soldDate window, sort newest-first for stable paging, then walk
+        # `skip` until a short page signals the window is exhausted. This avoids the
+        # old single-`take` grab that dropped near/recent comps spatially-blindly.
         top_left, bottom_right = bbox(lat, lng, radius_km)
-        filt = {"bbox": {"topLeft": top_left, "bottomRight": bottom_right}}
-        data = self._query(_LISTINGS_QUERY, {"filter": filt, "take": _TAKE})
-        rows = data.get("getListings2") or []
-        return [c for c in (listing_to_comp(r) for r in rows) if c is not None]
+        cutoff = _months_before(as_of, lookback_months)
+        filt = {"bbox": {"topLeft": top_left, "bottomRight": bottom_right},
+                "soldDate": {"gte": cutoff.isoformat()}}
+        order = {"soldDate": "desc"}
+        out: list[Comp] = []
+        for page in range(_MAX_PAGES):
+            data = self._query(_LISTINGS_QUERY, {
+                "filter": filt, "take": _TAKE, "skip": page * _TAKE, "order": order})
+            rows = data.get("getListings2") or []
+            out.extend(c for c in (listing_to_comp(r) for r in rows) if c is not None)
+            if len(rows) < _TAKE:        # last (partial) page — window exhausted
+                break
+        return out

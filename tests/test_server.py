@@ -70,6 +70,25 @@ def test_find_comps_returns_filtered_result():
     assert all(c.distance_km is not None for c in res.comps)
 
 
+def test_find_comps_fetches_at_hard_radius_and_max_lookback():
+    # The fetch must cover the widest the ladder ever reaches on the server-bounded
+    # axes: radius is a hard 3 km (never widened), recency is fetched at the 12 mo cap.
+    calls: dict = {}
+
+    class RecordingSource(StubCompSource):
+        def recent_sales(self, *, lat, lng, radius_km, lookback_months, as_of):
+            calls["radius_km"] = radius_km
+            calls["lookback_months"] = lookback_months
+            return super().recent_sales(lat=lat, lng=lng, radius_km=radius_km,
+                                        lookback_months=lookback_months, as_of=as_of)
+
+    tools = build_tools(source=RecordingSource(), geocoder=StubGeocoder((51.05, -114.07)),
+                        as_of=date(2026, 6, 1))
+    s = tools.get_subject("123 Maple Dr, Calgary", overrides=SUBJECT_OVERRIDES)
+    tools.find_comps(s)
+    assert calls["radius_km"] == 3.0 and calls["lookback_months"] == 12
+
+
 def test_estimate_value_runs_on_found_comps():
     s = TOOLS.get_subject("123 Maple Dr, Calgary", overrides=SUBJECT_OVERRIDES)
     res = TOOLS.find_comps(s)
