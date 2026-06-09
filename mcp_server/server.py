@@ -11,8 +11,12 @@ from mcp_server.geocode import Geocoder, NominatimGeocoder
 from mcp_server.comps import find_with_ladder
 from mcp_server.estimate import reconcile
 
-# Fetch candidates out to the widening ladder's max radius so relaxation has data.
-FETCH_RADIUS_KM = 8.0
+# Fetch the candidate pool at Sam's HARD limits. Radius is never widened (3 km is a
+# hard limit), and recency is fetched at the ladder's 12-month cap so the only
+# sanctioned widen (6 -> 12 mo) has data. Every other filter is a subset applied
+# locally in comps.py, so this fetch is complete for all of them.
+FETCH_RADIUS_KM = 3.0
+FETCH_LOOKBACK_MONTHS = 12
 
 _SUBJECT_FIELDS = ["community", "lat", "lng", "sqft", "year_built",
                    "beds", "baths", "garage", "lot_sf", "property_type"]
@@ -71,7 +75,7 @@ class Tools:
         self._require(subject, ["lat", "lng", "sqft"])
         candidates = self.source.recent_sales(
             lat=subject.lat, lng=subject.lng, radius_km=FETCH_RADIUS_KM,
-            lookback_months=criteria.lookback_months, as_of=self.as_of)
+            lookback_months=FETCH_LOOKBACK_MONTHS, as_of=self.as_of)
         return find_with_ladder(subject, candidates, criteria, as_of=self.as_of)
 
     def estimate_value(self, subject: Subject, comps: list, *,
@@ -124,8 +128,9 @@ def main() -> None:
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True})
     def find_comps(subject: dict, criteria: Optional[dict] = None) -> dict:
         """Find comparable recent sales near a subject and filter/rank by KV's house
-        rules (radius, size, recency, age; ranked by similarity). Applies a widening
-        ladder if too few. Takes the subject object from get_subject."""
+        rules (radius, size, recency, age; ranked by similarity). Sam's hard limits
+        (radius/size/age) never widen; if too few comps, it relaxes recency 6->12mo
+        then the secondary match toggles. Takes the subject object from get_subject."""
         crit = Criteria(**criteria) if criteria else Criteria()
         return tools.find_comps(Subject(**subject), crit).model_dump(by_alias=True)
 

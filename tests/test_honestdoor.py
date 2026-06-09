@@ -128,6 +128,61 @@ def test_recent_sales_uses_injected_client_and_bbox_query():
     assert "topLeft" in f and "bottomRight" in f and len(f["topLeft"]) == 2
 
 
+def _sale_row(street, sold_date_iso, sqft=1300, lat=51.03, lon=-114.06):
+    return {"type": "SALE", "soldPrice": "600000.00", "soldDate": sold_date_iso,
+            "address": {"streetNumber": None, "streetName": street, "city": "Calgary",
+                        "neighborhood": "x"},
+            "property": {"livingArea": sqft, "bedroomsTotal": 3, "bathroomsTotal": 2.0,
+                         "yearBuilt": 2000, "location": {"lat": lat, "lon": lon}}}
+
+
+def _paging_client(pages, captured):
+    """Mock GraphQL client that returns successive `pages` (each a list of rows)
+    for successive getListings2 requests, recording each request's variables."""
+    state = {"i": 0}
+
+    def handler(request):
+        captured.append(json.loads(request.content)["variables"])
+        i = state["i"]; state["i"] += 1
+        rows = pages[i] if i < len(pages) else []
+        return httpx.Response(200, json={"data": {"getListings2": rows}})
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_recent_sales_paginates_until_a_short_page():
+    from mcp_server.compsource.honestdoor import _TAKE
+    full = [_sale_row(f"{i} A St", "2026-03-01T00:00:00Z") for i in range(_TAKE)]
+    short = [_sale_row("1 B St", "2026-02-01T00:00:00Z")]
+    captured: list[dict] = []
+    src = HonestDoorCompSource(client=_paging_client([full, short], captured))
+    comps = src.recent_sales(lat=51.03, lng=-114.06, radius_km=3.0,
+                             lookback_months=12, as_of=date(2026, 6, 1))
+    assert len(comps) == _TAKE + 1           # rows from BOTH pages collected
+    assert len(captured) == 2                # a full page triggered a second request
+    assert captured[0]["skip"] == 0 and captured[1]["skip"] == _TAKE
+
+
+def test_recent_sales_requests_recency_window_and_order():
+    captured: list[dict] = []
+    src = HonestDoorCompSource(client=_paging_client([[]], captured))
+    src.recent_sales(lat=51.03, lng=-114.06, radius_km=3.0,
+                     lookback_months=6, as_of=date(2026, 6, 1))
+    v = captured[0]
+    assert "topLeft" in v["filter"]["bbox"] and "bottomRight" in v["filter"]["bbox"]
+    assert v["filter"]["soldDate"]["gte"] == "2025-12-01"   # as_of minus 6 months
+    assert v["order"] == {"soldDate": "desc"}               # newest-first, stable paging
+
+
+def test_recent_sales_stops_after_a_single_short_page():
+    captured: list[dict] = []
+    src = HonestDoorCompSource(client=_paging_client([[_sale_row("1 A St", "2026-03-01T00:00:00Z")]],
+                                                     captured))
+    comps = src.recent_sales(lat=51.03, lng=-114.06, radius_km=3.0,
+                             lookback_months=12, as_of=date(2026, 6, 1))
+    assert len(comps) == 1 and len(captured) == 1            # no needless extra request
+
+
 @pytest.mark.live
 def test_live_recent_sales_returns_real_calgary_comps():
     """Real network call. Skips if the endpoint is unreachable."""

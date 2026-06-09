@@ -69,14 +69,17 @@ def filter_and_rank(
 
 from mcp_server.models import Relaxation, FindCompsResult
 
-# Ordered widening ladder: (dimension, new_value). Applied cumulatively.
-# Recency relaxes from the 6-month default to 12 months only — never further back
-# (KV/Sam's rule: comps must be within a year).
-LADDER: list[tuple[str, float]] = [
+# Ordered relaxation ladder: (dimension, new_value), applied cumulatively.
+# Sam's hard limits (radius 3km, size 20%, age 10yr) NEVER widen — if nothing
+# qualifies within them the honest answer is "no comps." The only sanctioned widen is
+# recency 6 -> 12 months. Past that we loosen the secondary exact-match toggles,
+# least-defining first (garage, then baths, beds, and finally property type).
+LADDER: list[tuple[str, float | bool]] = [
     ("lookback_months", 12),
-    ("radius_km", 5.0), ("radius_km", 8.0),
-    ("size_pct", 0.30), ("size_pct", 0.40),
-    ("age_years", 20), ("age_years", 30),
+    ("match_garage", False),
+    ("match_baths", False),
+    ("match_beds", False),
+    ("match_type", False),
 ]
 
 
@@ -107,7 +110,13 @@ def find_with_ladder(
             break
         dim, new_val = step
         old_val = getattr(current, dim)
-        if new_val <= old_val:
+        # Only apply a step that actually LOOSENS. A toggle loosens by going
+        # True -> False; a numeric limit loosens by increasing. (bool is checked
+        # first since it's a subclass of int.)
+        if isinstance(new_val, bool):
+            if old_val == new_val:        # toggle already off — nothing to relax
+                continue
+        elif new_val <= old_val:          # numeric not an increase — skip
             continue
         setattr(current, dim, new_val)
         relaxations.append(Relaxation(step=dim, **{"from": old_val, "to": new_val}))

@@ -54,17 +54,22 @@ class Criteria(BaseModel):
     size_pct: float = 0.20
     lookback_months: int = 6
     age_years: int = 10
+    # Secondary exact-match constraints. beds/baths/garage are strict-by-default and
+    # null-safe (a missing value never drops a comp); the ladder relaxes them when too
+    # few comps qualify. match_type stays off: subject property_type is frequently
+    # unknown and the type filter is not null-safe, so defaulting it on would wrongly
+    # drop every comp.
     match_type: bool = False
-    match_beds: bool = False
-    match_baths: bool = False
-    match_garage: bool = False
+    match_beds: bool = True
+    match_baths: bool = True
+    match_garage: bool = True
     min_comps: int = 4
 
 
 class Relaxation(BaseModel):
-    step: str           # which dimension, e.g. "lookback_months"
-    from_: float = Field(alias="from")
-    to: float
+    step: str                          # which dimension, e.g. "lookback_months" or "match_garage"
+    from_: float | bool = Field(alias="from")   # bool when relaxing an exact-match toggle
+    to: float | bool
     model_config = {"populate_by_name": True}
 
 
