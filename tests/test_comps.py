@@ -5,14 +5,17 @@ from mcp_server.comps import months_between, filter_and_rank
 AS_OF = date(2026, 6, 1)
 
 
-def _subject():
+def _subject(baths=2, garage=2):
     return Subject(address="S", lat=51.05, lng=-114.08, sqft=2000,
-                   year_built=1985, property_type="detached", beds=3)
+                   year_built=1985, property_type="detached", beds=3,
+                   baths=baths, garage=garage)
 
 
-def _comp(addr, lat, lng, price, d, sqft, yb=1985, ptype="detached", beds=3):
+def _comp(addr, lat, lng, price, d, sqft, yb=1985, ptype="detached", beds=3,
+          baths=2, garage=None):
     return Comp(address=addr, lat=lat, lng=lng, sold_price=price, sold_date=d,
-                sqft=sqft, year_built=yb, property_type=ptype, beds=beds)
+                sqft=sqft, year_built=yb, property_type=ptype, beds=beds,
+                baths=baths, garage=garage)
 
 
 def test_months_between():
@@ -44,6 +47,25 @@ def test_secondary_filters_type_and_beds():
     wrong_type = _comp("condo", 51.051, -114.081, 800_000, date(2026, 3, 1), 2000, ptype="condo")
     kept, _ = filter_and_rank(s, [wrong_type], Criteria(match_type=True), as_of=AS_OF)
     assert kept == []
+
+
+def test_match_baths_drops_only_known_mismatch():
+    s = _subject(baths=2)
+    same = _comp("same", 51.051, -114.081, 800_000, date(2026, 3, 1), 2000, baths=2)
+    diff = _comp("diff", 51.051, -114.081, 800_000, date(2026, 3, 1), 2000, baths=3)
+    unknown = _comp("unk", 51.051, -114.081, 800_000, date(2026, 3, 1), 2000, baths=None)
+    kept, _ = filter_and_rank(s, [same, diff, unknown], Criteria(match_baths=True), as_of=AS_OF)
+    assert {c.address for c in kept} == {"same", "unk"}  # diff dropped; unknown kept
+
+
+def test_match_garage_is_null_safe():
+    s = _subject(garage=2)
+    same = _comp("same", 51.051, -114.081, 800_000, date(2026, 3, 1), 2000, garage=2)
+    diff = _comp("diff", 51.051, -114.081, 800_000, date(2026, 3, 1), 2000, garage=1)
+    unknown = _comp("unk", 51.051, -114.081, 800_000, date(2026, 3, 1), 2000, garage=None)
+    kept, _ = filter_and_rank(s, [same, diff, unknown], Criteria(match_garage=True), as_of=AS_OF)
+    # only the known-different comp is dropped; unknown garage is never silently excluded
+    assert {c.address for c in kept} == {"same", "unk"}
 
 
 def test_ranking_orders_most_similar_first():
@@ -78,14 +100,33 @@ def test_ladder_not_triggered_when_enough():
 
 def test_ladder_relaxes_time_first_then_records():
     s = _subject()
-    # all sold 15 months ago -> excluded at 12mo, included once lookback relaxes to 18
-    cands = [_comp(f"c{i}", 51.051, -114.081, 800_000, date(2025, 3, 1), 2000 + i)
+    # all sold 9 months ago -> excluded at the 6mo default, included once lookback relaxes to 12
+    cands = [_comp(f"c{i}", 51.051, -114.081, 800_000, date(2025, 9, 1), 2000 + i)
              for i in range(4)]
     res = find_with_ladder(s, cands, Criteria(min_comps=4), as_of=AS_OF)
     assert len(res.comps) == 4
     assert res.relaxations[0].step == "lookback_months"
-    assert res.relaxations[0].to == 18
+    assert res.relaxations[0].to == 12
     assert any("relaxed" in f.lower() for f in res.flags)
+
+
+def test_time_never_relaxes_beyond_12_months():
+    s = _subject()
+    # sold 13 months ago -> never eligible; the ladder must not reach past 12 months
+    cands = [_comp(f"c{i}", 51.051, -114.081, 800_000, date(2025, 5, 1), 2000 + i)
+             for i in range(4)]
+    res = find_with_ladder(s, cands, Criteria(min_comps=4), as_of=AS_OF)
+    assert res.comps == []
+    assert all(not (r.step == "lookback_months" and r.to > 12) for r in res.relaxations)
+
+
+def test_match_garage_skipped_with_flag_when_subject_unknown():
+    s = _subject(garage=None)
+    cands = [_comp(f"c{i}", 51.051, -114.081, 800_000, date(2026, 3, 1), 2000 + i, garage=i % 3)
+             for i in range(4)]
+    res = find_with_ladder(s, cands, Criteria(min_comps=4, match_garage=True), as_of=AS_OF)
+    assert len(res.comps) == 4  # nothing dropped: the constraint can't apply
+    assert any("garage match requested" in f and "skipped" in f for f in res.flags)
 
 
 def test_ladder_exhausts_and_returns_what_it_found():

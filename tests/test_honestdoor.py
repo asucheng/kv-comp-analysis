@@ -34,10 +34,12 @@ def test_listing_to_comp_maps_sold_sale():
            "address": {"streetNumber": None, "streetName": "432 56 AVENUE SW",
                        "city": "Calgary", "neighborhood": "Windsor Park"},
            "property": {"livingArea": 1312, "bedroomsTotal": 3, "bathroomsTotal": 3.1,
-                        "yearBuilt": 1993, "location": {"lat": 51.0034744, "lon": -114.0733492}}}
+                        "garageSpaces": 2, "yearBuilt": 1993,
+                        "location": {"lat": 51.0034744, "lon": -114.0733492}}}
     c = listing_to_comp(row)
     assert c is not None
     assert c.sold_price == 670888.0 and c.sqft == 1312.0
+    assert c.baths == 3.1 and c.garage == 2
     assert c.sold_date == date(2026, 1, 12) and c.lat == 51.0034744
     assert c.price_per_sqft == round(670888.0 / 1312, 2)
 
@@ -56,13 +58,15 @@ def test_listing_to_comp_skips_unusable_rows():
 
 def test_get_property_resolves_clean_slug_in_one_call():
     node = {"livingArea": 1450, "bedroomsTotal": 2, "bathroomsTotal": 2.1,
-            "yearBuilt": 2006, "lotSizeArea": 270.9959123, "neighbourhoodName": "Auburn Bay",
+            "garageSpaces": 2, "yearBuilt": 2006, "lotSizeArea": 270.9959123,
+            "neighbourhoodName": "Auburn Bay",
             "predictedValue": 537100, "location": {"lat": 50.8849599, "lon": -113.964597}}
     calls: list[str] = []
     client = _property_client({"122-auburn-bay-heights-se-calgary-ab": node}, calls)
     rec = HonestDoorCompSource(client=client).get_property(
         "122 Auburn Bay Heights SE, Auburn Bay, Calgary, AB T3M 0A7")
     assert rec.sqft == 1450 and rec.beds == 2 and rec.baths == 2.1 and rec.year_built == 2006
+    assert rec.garage == 2
     assert rec.lat == 50.8849599 and rec.lng == -113.964597
     assert rec.community == "Auburn Bay" and rec.hd_estimate == 537100
     assert rec.lot_sf == round(270.9959123 * _SQM_TO_SQFT)

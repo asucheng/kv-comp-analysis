@@ -17,7 +17,7 @@ def test_comp_computes_price_per_sqft():
 def test_criteria_defaults_match_sams_rules():
     c = Criteria()
     assert (c.radius_km, c.size_pct, c.lookback_months, c.age_years, c.min_comps) \
-        == (3.0, 0.20, 12, 10, 4)
+        == (3.0, 0.20, 6, 10, 4)
 
 
 def test_adjustment_rules_defaults():

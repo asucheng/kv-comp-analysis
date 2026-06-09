@@ -20,7 +20,7 @@ _LISTINGS_QUERY = (
     "getListings2(take: $take, filter: $filter){ "
     "soldPrice soldDate status type "
     "address { streetNumber streetName city neighborhood } "
-    "property { livingArea bedroomsTotal bathroomsTotal yearBuilt location { lat lon } } } }"
+    "property { livingArea bedroomsTotal bathroomsTotal garageSpaces yearBuilt location { lat lon } } } }"
 )
 _TAKE = 300
 
@@ -30,7 +30,7 @@ _TAKE = 300
 _PROPERTY_QUERY = (
     "query($filter: PropertyUniqueFilterInput!){ "
     "getProperty(filter: $filter){ "
-    "livingArea bedroomsTotal bathroomsTotal yearBuilt "
+    "livingArea bedroomsTotal bathroomsTotal garageSpaces yearBuilt "
     "lotSizeArea neighbourhoodName predictedValue "
     "location { lat lon } } }"
 )
@@ -75,6 +75,7 @@ def property_to_record(address: str, node: dict[str, Any]) -> PropertyRecord:
         year_built=node.get("yearBuilt"),
         beds=node.get("bedroomsTotal"),
         baths=node.get("bathroomsTotal"),
+        garage=node.get("garageSpaces"),
         lot_sf=round(lot * _SQM_TO_SQFT) if lot else None,
         hd_estimate=node.get("predictedValue"),
     )
@@ -107,6 +108,7 @@ def listing_to_comp(row: dict[str, Any]) -> Optional[Comp]:
         sold_date=_parse_iso_date(row["soldDate"]),
         sqft=float(prop["livingArea"]),
         beds=prop.get("bedroomsTotal"), baths=prop.get("bathroomsTotal"),
+        garage=prop.get("garageSpaces"),
         year_built=prop.get("yearBuilt"), property_type="detached",
     )
 

@@ -15,7 +15,7 @@ from mcp_server.estimate import reconcile
 FETCH_RADIUS_KM = 8.0
 
 _SUBJECT_FIELDS = ["community", "lat", "lng", "sqft", "year_built",
-                   "beds", "baths", "lot_sf", "property_type"]
+                   "beds", "baths", "garage", "lot_sf", "property_type"]
 
 
 @dataclass
