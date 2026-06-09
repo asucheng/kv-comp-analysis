@@ -1,6 +1,5 @@
 # mcp_server/compsource/honestdoor.py
 from __future__ import annotations
-import re
 from datetime import date, datetime
 from typing import Any, Optional
 import httpx
@@ -24,60 +23,53 @@ _LISTINGS_QUERY = (
 )
 _TAKE = 300
 
-# Resolve a single subject by slug. HonestDoor has no address-text search, but the
-# slug is derivable from the address (see _slug_candidates). lotSizeArea is in m²;
-# predictedValue is the AVM estimate (NOT a sale).
-_PROPERTY_QUERY = (
-    "query($filter: PropertyUniqueFilterInput!){ "
-    "getProperty(filter: $filter){ "
-    "livingArea bedroomsTotal bathroomsTotal garageSpaces yearBuilt "
-    "lotSizeArea neighbourhoodName predictedValue "
-    "location { lat lon } } }"
+# Resolve a subject by ADDRESS TEXT via getMultiSearch (the website's own search).
+# It's fuzzy and ranked — always returns candidates and never flags an exact match —
+# so search_subject returns the ranked list and the *caller* (agent + human) confirms
+# the address. `item` is a full Property; lotSizeArea is m², predictedValue is the AVM.
+_MULTISEARCH_QUERY = (
+    "query($filter: MultiSearchFilterInput!){ "
+    "getMultiSearch(filter: $filter){ properties{ item{ "
+    "slug livingArea bedroomsTotal bathroomsTotal garageSpaces yearBuilt "
+    "lotSizeArea neighbourhoodName predictedValue location{ lat lon } } } } }"
 )
 _SQM_TO_SQFT = 10.7639
 
-
-def _slugify_address(address: str) -> str:
-    """Build HonestDoor's property slug from a street address. Slugs are
-    '<street>-<city>-<province>', lowercased and hyphenated, with the
-    neighbourhood and postal code omitted, e.g.
-    '122 Auburn Bay Heights SE, Auburn Bay, Calgary, AB T3M 0A7'
-        -> '122-auburn-bay-heights-se-calgary-ab'.
-    v1 is Calgary-only (see scope), so city/province are pinned to Calgary AB; an
-    extension to other cities would parse them from the address instead."""
-    street = address.split(",")[0]
-    street = re.sub(r"\b(calgary|alberta|ab)\b", " ", street, flags=re.IGNORECASE)
-    return re.sub(r"[^a-z0-9]+", "-", f"{street} calgary ab".lower()).strip("-")
+_PROVINCES = {"ab", "bc", "sk", "mb", "on", "qc", "ns", "nb", "nl", "pe", "nt", "yt", "nu"}
+_DIRECTIONS = {"se", "sw", "ne", "nw", "n", "s", "e", "w"}
 
 
-def _slug_candidates(address: str) -> list[str]:
-    """Slug candidates to try in order. The clean slug carries the real data in
-    practice; HonestDoor also stores duplicate records under '<num>-r-...' /
-    '<num>-v-...' variants that are usually empty shells, kept here only as
-    insurance. get_property keeps the first candidate that returns *populated*
-    attributes (data presence, not mere slug existence)."""
-    clean = _slugify_address(address)
-    num, _, rest = clean.partition("-")
-    if not rest:
-        return [clean]
-    return [clean, f"{num}-r-{rest}", f"{num}-v-{rest}"]
+def _slug_to_address(slug: str) -> str:
+    """Render a HonestDoor slug as a readable address for the agent/user to confirm,
+    e.g. '122-auburn-bay-heights-se-calgary-ab' -> '122 Auburn Bay Heights SE Calgary AB',
+    '5687-yew-street-vancouver-bc-phflv' -> '5687 Yew Street Vancouver BC'. Slugs are
+    '<street>-<city>-<prov>' with an optional random suffix after the province; we trim
+    at the province and upper-case province/direction tokens."""
+    toks = slug.split("-")
+    prov_idx = max((i for i, t in enumerate(toks) if t in _PROVINCES), default=None)
+    if prov_idx is not None:
+        toks = toks[: prov_idx + 1]
+    return " ".join(t.upper() if t in _PROVINCES or t in _DIRECTIONS else t.capitalize()
+                    for t in toks)
 
 
-def property_to_record(address: str, node: dict[str, Any]) -> PropertyRecord:
-    """Map a getProperty node to a PropertyRecord (lotSizeArea m² -> lot_sf)."""
-    loc = node.get("location") or {}
-    lot = node.get("lotSizeArea")
+def multisearch_item_to_record(item: dict[str, Any]) -> PropertyRecord:
+    """Map a getMultiSearch `properties[].item` (a Property) to a PropertyRecord,
+    carrying its slug and a readable resolved_address (lotSizeArea m² -> lot_sf)."""
+    loc = item.get("location") or {}
+    lot = item.get("lotSizeArea")
+    slug = item.get("slug")
     return PropertyRecord(
-        address=address,
-        community=node.get("neighbourhoodName"),
+        address=_slug_to_address(slug), slug=slug, resolved_address=_slug_to_address(slug),
+        community=item.get("neighbourhoodName"),
         lat=loc.get("lat"), lng=loc.get("lon"),
-        sqft=node.get("livingArea"),
-        year_built=node.get("yearBuilt"),
-        beds=node.get("bedroomsTotal"),
-        baths=node.get("bathroomsTotal"),
-        garage=node.get("garageSpaces"),
+        sqft=item.get("livingArea"),
+        year_built=item.get("yearBuilt"),
+        beds=item.get("bedroomsTotal"),
+        baths=item.get("bathroomsTotal"),
+        garage=item.get("garageSpaces"),
         lot_sf=round(lot * _SQM_TO_SQFT) if lot else None,
-        hd_estimate=node.get("predictedValue"),
+        hd_estimate=item.get("predictedValue"),
     )
 
 
@@ -120,10 +112,10 @@ class HonestDoorCompSource(CompSource):
     `recent_sales` enumerates sold listings inside a bbox around the subject via
     getListings2, joining `property` for livingArea/beds/baths/yearBuilt/location.
 
-    `get_property` resolves the subject by slug: the public API has no address-text
-    search, but the slug is derivable from the address (see _slug_candidates), so a
-    raw address *does* resolve to real attributes. Only when the property is absent
-    from HonestDoor does it return an empty record (caller then asks the user).
+    `search_subject` resolves a subject from free address text via getMultiSearch —
+    the same nationwide search the website uses. It is fuzzy and ranked and always
+    returns candidates, so it never asserts an exact match; the caller (agent + a
+    human-approve gate) confirms the resolved address before valuing.
     Use politely (low volume); attribute the source.
     """
 
@@ -138,17 +130,14 @@ class HonestDoorCompSource(CompSource):
             raise RuntimeError(f"HonestDoor GraphQL error: {body['errors']}")
         return body.get("data", {})
 
-    def get_property(self, address: str) -> PropertyRecord:
-        # Slug candidate-and-verify: try the clean slug, then duplicate-record
-        # variants, and keep the first whose attributes are populated (livingArea
-        # present) — the variants are usually empty shells. If none resolve, the
-        # property isn't in HonestDoor: return an empty record so get_subject marks
-        # fields "missing" and the Skill asks the user.
-        for slug in _slug_candidates(address):
-            node = self._query(_PROPERTY_QUERY, {"filter": {"slug": slug}}).get("getProperty")
-            if node and node.get("livingArea") is not None:
-                return property_to_record(address, node)
-        return PropertyRecord(address=address)
+    def search_subject(self, address: str) -> list[PropertyRecord]:
+        # getMultiSearch returns up to ~5 fuzzy, ranked candidates (best first) and
+        # never flags an exact match — so we return the ranked list and let the
+        # caller confirm. Empty list => nothing matched at all.
+        data = self._query(_MULTISEARCH_QUERY, {"filter": {"query": address}})
+        props = (data.get("getMultiSearch") or {}).get("properties") or []
+        return [multisearch_item_to_record(p["item"]) for p in props
+                if (p.get("item") or {}).get("slug")]
 
     def recent_sales(self, *, lat: float, lng: float, radius_km: float,
                      lookback_months: int, as_of: date) -> list[Comp]:

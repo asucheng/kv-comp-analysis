@@ -15,13 +15,16 @@ underwriter-style value estimate — and can learn each underwriter's own method
 Alberta sold prices are confidential on MLS, and municipal assessments lack sqft/beds/baths
 and are valuations, not sales. Comps come from **real HonestDoor public data** via its
 GraphQL backend — unauthenticated, with real sold price/date + living area/beds/baths/year.
-The subject's own attributes (sqft/beds/baths/year/coordinates) resolve from its address by
-**deriving the HonestDoor slug** and querying `getProperty` — the public API has no
-address-text search, but the slug is constructable from the address. A free
-**OpenStreetMap/Nominatim geocoder** remains as a coordinate fallback when the subject isn't
-in HonestDoor. The HonestDoor headline price (`predictedValue`) is an **AVM estimate, not a
-sale** — the agent only treats Sold History as a real transaction. The data source is **pluggable** (`CompSource`): KV can swap in MLS/DDF, Land
-Titles, or internal deal records.
+The subject's own attributes (sqft/beds/baths/year/coordinates) resolve from its address via
+HonestDoor's **`getMultiSearch`** (the site's own address search). That search is fuzzy and
+ranked — it always returns its closest guesses and never flags an exact match — so the tool
+takes the top hit but the **agent confirms `resolved_address` with the user (a human-approve
+gate) before valuing**, and offers `match_candidates` when the top hit looks wrong. This
+keeps a fuzzy neighbour from silently driving a valuation. A free **OpenStreetMap/Nominatim
+geocoder** remains as a coordinate fallback when nothing matches. The HonestDoor headline
+price (`predictedValue`) is an **AVM estimate, not a sale** — the agent only treats Sold
+History as a real transaction. The data source is **pluggable** (`CompSource`): KV can swap
+in MLS/DDF, Land Titles, or internal deal records.
 
 ## Setup on Claude Desktop (step by step)
 
@@ -147,5 +150,8 @@ pytest -q
 ```
 
 ## Scope
-v1: residential, Calgary-first. Documented extensions: Edmonton, commercial, real SOLD feeds
-via `CompSource`. See `docs/superpowers/specs/2026-06-06-kv-comp-analysis-design.md`.
+v1: residential, Calgary-validated. Subject **search** (`getMultiSearch`) is nationwide, so
+addresses anywhere in Canada resolve; **comp coverage**, however, varies by region (Alberta/BC
+strong, Ontario sparse) and accuracy is validated only for Calgary — where there are no comps,
+the agent says so. Documented extensions: per-market comp validation, commercial, real SOLD
+feeds via `CompSource`. See `docs/superpowers/specs/2026-06-06-kv-comp-analysis-design.md`.

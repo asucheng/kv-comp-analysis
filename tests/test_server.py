@@ -2,6 +2,7 @@ from datetime import date
 import pytest
 from mcp_server.server import build_tools
 from mcp_server.models import Subject, Estimate, CrossCheck, FindCompsResult
+from mcp_server.compsource.base import PropertyRecord
 from tests.stubs import StubCompSource, StubGeocoder
 
 TOOLS = build_tools(source=StubCompSource(), geocoder=StubGeocoder((51.05, -114.07)),
@@ -23,9 +24,42 @@ def test_get_subject_overrides_win_over_geocode():
 
 
 def test_get_subject_marks_missing_when_unresolvable():
-    # source has no record and these fields aren't geocodable/overridden
+    # search returns nothing and these fields aren't geocodable/overridden
     s = TOOLS.get_subject("123 Maple Dr, Calgary", overrides={"sqft": 1800})
     assert s.provenance["year_built"] == "missing"
+
+
+def _match(slug, addr, **kw):
+    return PropertyRecord(address=addr, slug=slug, resolved_address=addr, **kw)
+
+
+def test_get_subject_resolves_from_top_search_hit():
+    top = _match("122-auburn-bay-heights-se-calgary-ab", "122 Auburn Bay Heights SE Calgary AB",
+                 sqft=1450, year_built=2006, beds=2, baths=2.1, lat=50.88, lng=-113.96,
+                 hd_estimate=537100, community="Auburn Bay")
+    tools = build_tools(source=StubCompSource(matches=[top]),
+                        geocoder=StubGeocoder((51.05, -114.07)), as_of=date(2026, 6, 1))
+    s = tools.get_subject("122 Auburn Bay Heights SE")
+    assert s.sqft == 1450 and s.provenance["sqft"] == "honestdoor"
+    assert s.resolved_address == "122 Auburn Bay Heights SE Calgary AB"
+    assert s.lat == 50.88 and s.provenance["lat"] == "honestdoor"  # search coords, not geocoder
+
+
+def test_get_subject_returns_match_candidates_for_confirmation():
+    matches = [_match("122-auburn-bay-heights-se-calgary-ab", "122 Auburn Bay Heights SE Calgary AB", sqft=1450),
+               _match("122-auburn-bay-close-se-calgary-ab", "122 Auburn Bay Close SE Calgary AB", sqft=1961),
+               _match("122-auburn-bay-manor-se-calgary-ab", "122 Auburn Bay Manor SE Calgary AB", sqft=1437)]
+    tools = build_tools(source=StubCompSource(matches=matches),
+                        geocoder=StubGeocoder((51.05, -114.07)), as_of=date(2026, 6, 1))
+    s = tools.get_subject("122 Auburn Bay")
+    assert s.resolved_address == "122 Auburn Bay Heights SE Calgary AB"
+    assert s.match_candidates == ["122 Auburn Bay Close SE Calgary AB",
+                                  "122 Auburn Bay Manor SE Calgary AB"]
+
+
+def test_get_subject_no_match_leaves_resolved_address_none():
+    s = TOOLS.get_subject("999 Nowhere St", overrides={"sqft": 1800})
+    assert s.resolved_address is None and s.match_candidates == []
 
 
 def test_find_comps_returns_filtered_result():
