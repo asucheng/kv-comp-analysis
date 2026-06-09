@@ -60,8 +60,10 @@ def filter_and_rank(
 from mcp_server.models import Relaxation, FindCompsResult
 
 # Ordered widening ladder: (dimension, new_value). Applied cumulatively.
+# Recency relaxes from the 6-month default to 12 months only — never further back
+# (KV/Sam's rule: comps must be within a year).
 LADDER: list[tuple[str, float]] = [
-    ("lookback_months", 18), ("lookback_months", 24),
+    ("lookback_months", 12),
     ("radius_km", 5.0), ("radius_km", 8.0),
     ("size_pct", 0.30), ("size_pct", 0.40),
     ("age_years", 20), ("age_years", 30),

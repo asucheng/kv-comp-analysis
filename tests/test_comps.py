@@ -78,14 +78,24 @@ def test_ladder_not_triggered_when_enough():
 
 def test_ladder_relaxes_time_first_then_records():
     s = _subject()
-    # all sold 15 months ago -> excluded at 12mo, included once lookback relaxes to 18
-    cands = [_comp(f"c{i}", 51.051, -114.081, 800_000, date(2025, 3, 1), 2000 + i)
+    # all sold 9 months ago -> excluded at the 6mo default, included once lookback relaxes to 12
+    cands = [_comp(f"c{i}", 51.051, -114.081, 800_000, date(2025, 9, 1), 2000 + i)
              for i in range(4)]
     res = find_with_ladder(s, cands, Criteria(min_comps=4), as_of=AS_OF)
     assert len(res.comps) == 4
     assert res.relaxations[0].step == "lookback_months"
-    assert res.relaxations[0].to == 18
+    assert res.relaxations[0].to == 12
     assert any("relaxed" in f.lower() for f in res.flags)
+
+
+def test_time_never_relaxes_beyond_12_months():
+    s = _subject()
+    # sold 13 months ago -> never eligible; the ladder must not reach past 12 months
+    cands = [_comp(f"c{i}", 51.051, -114.081, 800_000, date(2025, 5, 1), 2000 + i)
+             for i in range(4)]
+    res = find_with_ladder(s, cands, Criteria(min_comps=4), as_of=AS_OF)
+    assert res.comps == []
+    assert all(not (r.step == "lookback_months" and r.to > 12) for r in res.relaxations)
 
 
 def test_ladder_exhausts_and_returns_what_it_found():

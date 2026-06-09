@@ -46,7 +46,7 @@ class Comp(BaseModel):
 class Criteria(BaseModel):
     radius_km: float = 3.0
     size_pct: float = 0.20
-    lookback_months: int = 12
+    lookback_months: int = 6
     age_years: int = 10
     match_type: bool = False
     match_beds: bool = False
