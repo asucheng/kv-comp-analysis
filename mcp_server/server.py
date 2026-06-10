@@ -83,7 +83,6 @@ class Tools:
                        overrides: Optional[dict] = None,
                        ladder_depth: int = 0) -> Estimate:
         self._require(subject, ["sqft"])
-        from mcp_server.models import Overrides
         ov = Overrides(**overrides) if overrides else None
         return reconcile(subject, comps, rules or AdjustmentRules(),
                          as_of=self.as_of, ladder_depth=ladder_depth, overrides=ov)
