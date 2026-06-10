@@ -28,3 +28,34 @@ def test_parse_result_line_strips_dollars_and_commas():
 def test_parse_result_line_none_when_absent_or_malformed():
     assert parse_result_line("no result here") is None
     assert parse_result_line("RESULT: garbage") is None
+
+
+from eval.verify import grade, Verdict
+
+
+def _ok(point, resolved="61 Auburn Meadows View SE Calgary AB"):
+    return Result(point, point*0.95, point*1.05, resolved, "ok")
+
+
+def test_grade_pass_within_tolerance():
+    v = grade("a", "lbl", _ok(484_000), 484_000, "61 Auburn Meadows View SE Calgary AB")
+    assert v.verdict == "PASS" and abs(v.delta_pct) < 0.001
+
+
+def test_grade_fail_when_beyond_tolerance():
+    v = grade("a", "lbl", _ok(1_780_000), 2_130_800)  # ~ -16%; omit avm_resolved -> delta path
+    assert v.verdict == "FAIL" and v.delta_pct < -0.10
+
+
+def test_grade_fail_on_missing_or_nonok_result():
+    assert grade("a", "l", None, 500_000).verdict == "FAIL"
+    assert grade("a", "l", Result(None, None, None, "x", "ambiguous"), 500_000).verdict == "FAIL"
+
+
+def test_grade_inconclusive_without_avm():
+    assert grade("a", "l", _ok(500_000), None).verdict == "INCONCLUSIVE"
+
+
+def test_grade_flags_resolved_mismatch():
+    v = grade("a", "l", _ok(500_000, "999 Other St"), 500_000, "61 Auburn Meadows View SE Calgary AB")
+    assert v.verdict == "FLAG"
