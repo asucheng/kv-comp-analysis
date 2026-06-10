@@ -57,9 +57,14 @@ You surface judgment; you never hide it behind a number.
 
 1. **Subject** — address + key attributes, noting user-provided vs looked-up.
 2. **Comps** — table: address, sold price/date, sqft, $/sqft, distance, why included. Use the
-   FULL comp set in the math even if you only display the closest ~10.
+   FULL comp set in the math even if you only display the closest ~10. Explain the funnel:
+   `candidates_considered` is the raw geographic pool (every sale in a bounding box over the
+   last 12 months — *not* comps); the house rules (Sam's 5) then narrow it to the comp set.
+   Say it like "1,159 sales in the area over 12 months → 29 meet the house rules."
 3. **Adjustment grid** — per comp, each line item shows: factor, $ or % value, **method**
    (matched_pair/grouping/regression), **source** (article-method/our-judgment), and confidence.
+   For features, report the **per-unit** value (e.g. "$18.6k *per garage*"); a comp with a double
+   garage shows `2 × per-garage`, never "per double garage".
 4. **Disclosures** — Tier-2 caveats (age/vintage skew, location clustering): the imbalance, its
    likely direction of bias, and why it wasn't adjusted.
 5. **Conclusion** — median point value + 25–75% range + confidence, and the one-paragraph "why".

@@ -34,6 +34,9 @@ def _override(dv: Derivation, value) -> Derivation:
     return Derivation(value, dv.method, "our-judgment", f"override (was {dv.value})", "medium")
 
 
+_UNIT = {"beds": "bed", "baths": "bath", "garage": "garage"}
+
+
 def _adj(factor, method, source, *, pct=None, dollar=None, evidence, conf) -> Adjustment:
     if pct is not None:
         rationale = f"{factor}: {pct*100:+.2f}% ({evidence})"
@@ -65,10 +68,18 @@ def apply_adjustments(subject: Subject, comp: Comp, derived: DerivedSet, *, as_o
                             conf=derived.size.confidence))
 
     for factor, dv in (("beds", derived.beds), ("baths", derived.baths), ("garage", derived.garage)):
-        d = feat_dollar(getattr(subject, factor), getattr(comp, factor), dv.value)
+        sc, cc = getattr(subject, factor), getattr(comp, factor)
+        d = feat_dollar(sc, cc, dv.value)
         p += d
+        unit = _UNIT[factor]
+        # Always express the per-UNIT value × the count gap, so a double-garage comp
+        # reads "2 × $/garage", never "$X per double garage".
+        if d != 0:
+            ev = f"subject {sc:g} vs comp {cc:g} {unit} -> {sc - cc:+g} x ${dv.value:,.0f}/{unit} ({dv.method})"
+        else:
+            ev = dv.evidence
         adjustments.append(_adj(factor, dv.method, dv.source_type, dollar=d,
-                                evidence=dv.evidence, conf=dv.confidence))
+                                evidence=ev, conf=dv.confidence))
 
     adjusted_price = round(p, 0)
     return CompAdjustment(
@@ -140,6 +151,10 @@ def reconcile(subject: Subject, comps: list[Comp], rules: AdjustmentRules, *,
 
     derived = DerivedSet(time, size, feats["beds"], feats["baths"], feats["garage"])
     notes.append(f"time {time.method} {time.value*100:.2f}%/mo; size {size.method} ${size.value:.0f}/sqft")
+    for fname in ("beds", "baths", "garage"):
+        fdv = feats[fname]
+        if fdv.value:
+            notes.append(f"{fname}: ${fdv.value:,.0f} per {_UNIT[fname]} ({fdv.method}; {fdv.evidence})")
 
     per_comp = [apply_adjustments(subject, c, derived, as_of=as_of) for c in comps]
 
