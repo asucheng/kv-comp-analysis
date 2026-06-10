@@ -22,7 +22,13 @@ Lower rung → lower confidence.
 ## Sequence (net each out before the next — prevents double-counting)
 transactional (flag-only) → time → size → beds → baths → garage → location (qualitative).
 
-- **Time:** %/month from grouping of recent vs older sales (regression fallback); clamped ±2%/mo.
+- **Time:** %/month, measured on **size-controlled** data so a size-imbalanced comp set can't
+  masquerade as a price trend. Rungs: (1) **size-matched pairs across time** — comps within ±5%
+  sqft sold at different dates, so the $/sqft gap is pure market movement; (2) **grouping** of
+  recent vs older sales on **size-normalized** $/sqft (each price leveled to the subject's size
+  via a provisional marginal rate); (3) **regression** on size-normalized $/sqft (small-N
+  fallback). Clamped ±2%/mo; a clamped trend lowers confidence. If recent vs older comps differ
+  in size, a `time` disclosure flags the residual risk.
 - **Size (GLA):** `(comp.sqft − subject.sqft) × marginal $/sqft`, marginal rate = Δprice/Δsqft from
   the comps. Marginal $/sqft is below average $/sqft — land + fixed value already counted.
 - **Beds/Baths/Garage:** per-unit $ from grouping on the size/time-netted residual; null-safe.

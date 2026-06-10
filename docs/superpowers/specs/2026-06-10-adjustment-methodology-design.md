@@ -105,10 +105,25 @@ adjusted_ppsf  = adjusted_price / subject.sqft         # for dispersion/range on
 **median** of `adjusted_price` across comps (§5).
 
 ### 4.1 Time (market conditions) — Tier 1, **adjusted**
-- Hierarchy: **matched pair (repeat sale)** → **grouping of sales (primary)** → **least-squares (small-N fallback)** → qualitative.
-- Grouping: bucket comps by recency (e.g. 0–3 mo vs 3–6 mo); trend = (Δ median $/sqft) ÷ (Δ mean months) → %/month; age each comp forward to "today."
-- Keep `estimate_trend` (clamped ±2%/mo) as the regression rung.
-- **Caveat to disclose:** grouping assumes comparable *mix* across periods; if recent comps skew larger/nicer, the trend partly reflects that, not time.
+**Measured on size-controlled data** so a size-imbalanced comp set cannot masquerade as a price
+trend (the time/size confound — see the addendum at the end of this section).
+- Hierarchy: (1) **size-matched pairs across time** — comps within ±5% sqft sold at different
+  dates; the $/sqft gap ÷ months apart is pure market movement (median across pairs). This
+  generalises the original "repeat sale" rung to the *findable* case of same-size homes.
+  → (2) **grouping of sales on size-normalized $/sqft** — level each price to the subject's size
+  via a provisional marginal rate (`linreg_slope` of price~sqft), then bucket recent vs older.
+  → (3) **regression on size-normalized $/sqft** (small-N fallback) → qualitative.
+- Clamped ±2%/mo; **a clamped trend lowers confidence** (saturation = unstable fit), and that
+  low per-rung confidence propagates to the overall estimate confidence.
+- **Disclosure (§6):** when recent vs older comps differ in mean sqft (≥8%), emit a `time`
+  `Disclosure` flagging residual confound risk.
+
+> **Addendum (added during implementation).** The first build derived the trend by grouping on
+> *raw* $/sqft, before size was netted out. A size-imbalanced set (e.g. recent sales larger →
+> lower $/sqft) then read as a spurious market decline and biased the estimate ~11% with "high"
+> confidence. The fix — measure time on size-controlled data (match by size, else normalize) — is
+> the hierarchy above. "Time first, then size" remains the *application* order; this only changes
+> how the time *rate* is *measured*.
 
 ### 4.2 Size / GLA — Tier 1, **adjusted**
 - Mechanic (article-standard): `adjustment = (comp.sqft − subject.sqft) × marginal_$psf`.
