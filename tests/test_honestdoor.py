@@ -5,7 +5,8 @@ import httpx
 import pytest
 from mcp_server.compsource.base import CompSource, PropertyRecord
 from mcp_server.compsource.honestdoor import (
-    HonestDoorCompSource, listing_to_comp, _slug_to_address, _SQM_TO_SQFT)
+    HonestDoorCompSource, listing_to_comp, multisearch_item_to_record,
+    _slug_to_address, _SQM_TO_SQFT)
 
 
 def _multisearch_client(items, calls=None):
@@ -210,3 +211,40 @@ def test_live_get_property_resolves_subject_from_address():
     assert rec.lat and rec.lng, "expected coordinates from the property record"
     print(f"LIVE subject: {rec.sqft}sqft beds {rec.beds} baths {rec.baths} "
           f"yr {rec.year_built} avm {rec.hd_estimate}")
+
+
+# ---------------------------------------------------------------------------
+# Estimated bed/bath fallback (HonestDoor populates *Est when the exact field is
+# null — ~37% of sold rows; coalesce exact-first so comps aren't left blank).
+# ---------------------------------------------------------------------------
+def _row(bed=None, bed_est=None, bath=None, bath_est=None):
+    return {"type": "SALE", "soldPrice": "700000", "soldDate": "2026-01-10T00:00:00Z",
+            "address": {"streetNumber": "1", "streetName": "Test St"},
+            "property": {"livingArea": 1800, "bedroomsTotal": bed, "bedroomsTotalEst": bed_est,
+                         "bathroomsTotal": bath, "bathroomsTotalEst": bath_est,
+                         "garageSpaces": None, "yearBuilt": 2010,
+                         "location": {"lat": 51.0, "lon": -114.0}}}
+
+
+def test_listing_to_comp_falls_back_to_estimated_bed_bath():
+    c = listing_to_comp(_row(bed=None, bed_est=4, bath=None, bath_est=2))
+    assert c is not None
+    assert c.beds == 4 and c.baths == 2          # recovered from *Est
+
+
+def test_listing_to_comp_prefers_exact_over_estimate():
+    c = listing_to_comp(_row(bed=3, bed_est=5, bath=2.1, bath_est=2))
+    assert c.beds == 3 and c.baths == 2.1        # exact wins when present
+
+
+def test_multisearch_item_falls_back_to_estimated_bed_bath():
+    item = {"slug": "1-test-st-calgary-ab", "livingArea": 1800, "yearBuilt": 2010,
+            "bedroomsTotal": None, "bedroomsTotalEst": 4,
+            "bathroomsTotal": None, "bathroomsTotalEst": 2,
+            "garageSpaces": None, "location": {"lat": 51.0, "lon": -114.0}}
+    rec = multisearch_item_to_record(item)
+    assert rec.beds == 4 and rec.baths == 2
+
+    item_exact = {**item, "bedroomsTotal": 3, "bathroomsTotal": 2.1}
+    rec2 = multisearch_item_to_record(item_exact)
+    assert rec2.beds == 3 and rec2.baths == 2.1

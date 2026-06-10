@@ -19,7 +19,8 @@ _LISTINGS_QUERY = (
     "getListings2(take: $take, skip: $skip, filter: $filter, order: $order){ "
     "soldPrice soldDate status type "
     "address { streetNumber streetName city neighborhood } "
-    "property { livingArea bedroomsTotal bathroomsTotal garageSpaces yearBuilt location { lat lon } } } }"
+    "property { livingArea bedroomsTotal bedroomsTotalEst bathroomsTotal bathroomsTotalEst "
+    "garageSpaces yearBuilt location { lat lon } } } }"
 )
 _TAKE = 300                # rows per page (server cap); recent_sales paginates past it
 _MAX_PAGES = 40           # safety stop (~12k rows) — a 3km×12mo window never approaches this
@@ -31,10 +32,21 @@ _MAX_PAGES = 40           # safety stop (~12k rows) — a 3km×12mo window never
 _MULTISEARCH_QUERY = (
     "query($filter: MultiSearchFilterInput!){ "
     "getMultiSearch(filter: $filter){ properties{ item{ "
-    "slug livingArea bedroomsTotal bathroomsTotal garageSpaces yearBuilt "
+    "slug livingArea bedroomsTotal bedroomsTotalEst bathroomsTotal bathroomsTotalEst "
+    "garageSpaces yearBuilt "
     "lotSizeArea neighbourhoodName predictedValue location{ lat lon } } } } }"
 )
 _SQM_TO_SQFT = 10.7639
+
+
+def _coalesce_attr(d: dict[str, Any], exact_key: str, est_key: str):
+    """Prefer the confirmed value; fall back to HonestDoor's `*Est` estimate (what the
+    website shows) when the exact field is null. HonestDoor leaves the confirmed
+    bedroomsTotal/bathroomsTotal null on ~37% of sold records but populates the
+    estimate, so without this fallback those comps come back blank. (No `garageSpacesEst`
+    exists, so garage has no estimate and stays sparse — a genuine source limitation.)"""
+    v = d.get(exact_key)
+    return v if v is not None else d.get(est_key)
 
 _PROVINCES = {"ab", "bc", "sk", "mb", "on", "qc", "ns", "nb", "nl", "pe", "nt", "yt", "nu"}
 _DIRECTIONS = {"se", "sw", "ne", "nw", "n", "s", "e", "w"}
@@ -66,8 +78,8 @@ def multisearch_item_to_record(item: dict[str, Any]) -> PropertyRecord:
         lat=loc.get("lat"), lng=loc.get("lon"),
         sqft=item.get("livingArea"),
         year_built=item.get("yearBuilt"),
-        beds=item.get("bedroomsTotal"),
-        baths=item.get("bathroomsTotal"),
+        beds=_coalesce_attr(item, "bedroomsTotal", "bedroomsTotalEst"),
+        baths=_coalesce_attr(item, "bathroomsTotal", "bathroomsTotalEst"),
         garage=item.get("garageSpaces"),
         lot_sf=round(lot * _SQM_TO_SQFT) if lot else None,
         hd_estimate=item.get("predictedValue"),
@@ -109,7 +121,8 @@ def listing_to_comp(row: dict[str, Any]) -> Optional[Comp]:
         sold_price=float(row["soldPrice"]),
         sold_date=_parse_iso_date(row["soldDate"]),
         sqft=float(prop["livingArea"]),
-        beds=prop.get("bedroomsTotal"), baths=prop.get("bathroomsTotal"),
+        beds=_coalesce_attr(prop, "bedroomsTotal", "bedroomsTotalEst"),
+        baths=_coalesce_attr(prop, "bathroomsTotal", "bathroomsTotalEst"),
         garage=prop.get("garageSpaces"),
         year_built=prop.get("yearBuilt"), property_type="detached",
     )
