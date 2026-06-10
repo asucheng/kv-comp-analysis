@@ -36,8 +36,33 @@ def test_relaxation_records_a_boolean_toggle():
     assert r.model_dump(by_alias=True) == {"step": "match_garage", "from": True, "to": False}
 
 
-def test_adjustment_rules_defaults():
+def test_adjustment_rules_trimmed_to_config_only():
+    from mcp_server.models import AdjustmentRules
     r = AdjustmentRules()
-    assert r.age_rate == 0.005
-    assert r.size_elast == 0.20
-    assert r.trend_clamp == 0.02
+    assert (r.trend_clamp, r.min_comps, r.outlier_iqr, r.drop_outliers) == (0.02, 4, 1.5, False)
+    # invented constants are gone
+    assert not hasattr(r, "age_rate")
+    assert not hasattr(r, "size_elast")
+    assert not hasattr(r, "weight_a")
+
+
+def test_adjustment_payload_shape():
+    from mcp_server.models import Adjustment
+    a = Adjustment(factor="size", method_used="grouping", source_type="article-method",
+                   value_dollar=-10000.0, evidence="8 comps, grouped", confidence="medium",
+                   rationale="200 sqft larger x $50/sqft")
+    assert a.value_pct is None and a.value_dollar == -10000.0
+
+
+def test_disclosure_shape():
+    from mcp_server.models import Disclosure
+    d = Disclosure(factor="age", skew="comps avg 5 yr older", direction="understate",
+                   caveat="older set may understate a newer subject")
+    assert d.source_type == "our-judgment"
+
+
+def test_overrides_all_optional():
+    from mcp_server.models import Overrides
+    o = Overrides()
+    assert o.marginal_ppsf is None and o.garage_value is None
+    assert Overrides(marginal_ppsf=50.0).marginal_ppsf == 50.0

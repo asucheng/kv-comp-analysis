@@ -5,6 +5,8 @@ from pydantic import BaseModel, Field, computed_field
 
 PropertyType = Literal["detached", "semi", "townhouse", "condo", "other"]
 Confidence = Literal["high", "medium", "low"]
+AdjMethod = Literal["matched_pair", "grouping", "regression", "cost_convention", "none"]
+SourceType = Literal["article-method", "our-judgment"]
 
 
 class Subject(BaseModel):
@@ -81,21 +83,40 @@ class FindCompsResult(BaseModel):
 
 
 class AdjustmentRules(BaseModel):
-    age_rate: float = 0.005      # per year of age difference (newer = premium)
-    size_elast: float = 0.20     # per unit of fractional size difference
-    trend_clamp: float = 0.02    # max |monthly trend|
-    weight_a: float = 0.5        # distance_km coefficient
-    weight_b: float = 2.0        # |size%| coefficient
-    weight_c: float = 0.05       # |ageΔ years| coefficient
-    weight_d: float = 0.1        # months-old coefficient
-    outlier_iqr: float = 1.5
+    """Config only — no adjustment magnitudes (those are derived from the comps)."""
+    trend_clamp: float = 0.02     # max |monthly time trend|
     min_comps: int = 4
+    outlier_iqr: float = 1.5      # IQR multiplier if drop_outliers is on
+    drop_outliers: bool = False   # median blend tolerates outliers; off by default
+
+
+class Overrides(BaseModel):
+    """Human-supplied coefficients that replace a derived one (inspect-then-override)."""
+    time_pct_per_month: Optional[float] = None
+    marginal_ppsf: Optional[float] = None
+    bed_value: Optional[float] = None
+    bath_value: Optional[float] = None
+    garage_value: Optional[float] = None
 
 
 class Adjustment(BaseModel):
-    factor: str          # "time" | "age" | "size"
-    pct: float           # multiplicative effect, e.g. +0.015
+    factor: str                       # "time" | "size" | "beds" | "baths" | "garage"
+    method_used: AdjMethod
+    source_type: SourceType
+    value_pct: Optional[float] = None     # percentage adjustments (time)
+    value_dollar: Optional[float] = None  # dollar adjustments (size/features)
+    evidence: str
+    confidence: Confidence
     rationale: str
+
+
+class Disclosure(BaseModel):
+    """A Tier-2 (filtered-not-adjusted) caveat: imbalance + likely direction of bias."""
+    factor: str                       # "age" | "location" | "transactional"
+    skew: str
+    direction: str                    # "understate" | "overstate" | "unknown"
+    caveat: str
+    source_type: SourceType = "our-judgment"
 
 
 class CompAdjustment(BaseModel):
@@ -103,9 +124,8 @@ class CompAdjustment(BaseModel):
     raw_price: float
     raw_ppsf: float
     adjustments: list[Adjustment]
-    adjusted_ppsf: float        # comp's subject-equivalent $/sqft
-    adjusted_price: float       # adjusted_ppsf * subject.sqft (this comp's indication of subject value)
-    weight: float
+    adjusted_price: float             # this comp's indication of subject value
+    adjusted_ppsf: float
 
 
 class Estimate(BaseModel):
@@ -114,6 +134,7 @@ class Estimate(BaseModel):
     high: float
     confidence: Confidence
     per_comp: list[CompAdjustment]
+    disclosures: list[Disclosure] = Field(default_factory=list)
     method_notes: list[str] = Field(default_factory=list)
 
 
