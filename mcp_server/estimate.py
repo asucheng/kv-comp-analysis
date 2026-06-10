@@ -5,7 +5,7 @@ from statistics import median, mean, pstdev, quantiles
 from typing import Optional
 from mcp_server.models import (
     Subject, Comp, AdjustmentRules, Overrides, Adjustment, CompAdjustment,
-    Disclosure, Estimate, Confidence,
+    Estimate, Confidence,
 )
 from mcp_server.comps import months_between
 from mcp_server.derivation import (
@@ -31,8 +31,7 @@ def feat_dollar(subj_count, comp_count, per_unit: float) -> float:
 
 
 def _override(dv: Derivation, value) -> Derivation:
-    return Derivation(value, dv.method if dv.method != "none" else "grouping",
-                      "our-judgment", f"override (was {dv.value})", "medium")
+    return Derivation(value, dv.method, "our-judgment", f"override (was {dv.value})", "medium")
 
 
 def _adj(factor, method, source, *, pct=None, dollar=None, evidence, conf) -> Adjustment:
@@ -80,6 +79,7 @@ def apply_adjustments(subject: Subject, comp: Comp, derived: DerivedSet, *, as_o
 
 
 def remove_outliers(values: list[float], *, iqr_mult: float = 1.5) -> list[int]:
+    """Return indices of values within median ± iqr_mult*IQR. No-op if < 4 values."""
     if len(values) < 4:
         return list(range(len(values)))
     q1, _, q3 = quantiles(values, n=4)
@@ -148,6 +148,7 @@ def reconcile(subject: Subject, comps: list[Comp], rules: AdjustmentRules, *,
             notes.append(f"dropped {len(prices)-len(keep)} outlier(s)")
         per_comp = [per_comp[i] for i in keep]
         prices = [prices[i] for i in keep]
+        comps = [comps[i] for i in keep]   # keep disclosures consistent with the blended set
 
     point = round(median(prices), 0)
     if len(prices) >= 4:

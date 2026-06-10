@@ -66,7 +66,8 @@ def test_reconcile_respects_overrides():
     size = next(a for a in est.per_comp[0].adjustments if a.factor == "size")
     assert size.source_type == "our-judgment"   # _override re-tags as our-judgment
     # override applied: a 200-sqft-larger comp gets -$20,000
-    big = next(ca for ca in est.per_comp if ca.raw_price in (800_000, 802_000) and ca.raw_ppsf < 380)
+    big = next((ca for ca in est.per_comp if ca.raw_price in (800_000, 802_000) and ca.raw_ppsf < 380), None)
+    assert big is not None
     assert any(a.factor == "size" and a.value_dollar == -20000.0 for a in big.adjustments)
 
 
