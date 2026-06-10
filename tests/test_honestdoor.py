@@ -304,3 +304,46 @@ def test_falls_back_to_property_when_no_mls_details():
     c = listing_to_comp(row)
     assert c.beds == 4 and c.baths == 2 and c.garage == 3   # *Est + property fallback
     assert c.parking_type is None
+
+
+# ---------------------------------------------------------------------------
+# Subject MLS enrichment: resolve the subject's own MLS listing by propertyId
+# so its garage/property_type/parking/bed-bath come from MLS, not the sparse entity.
+# ---------------------------------------------------------------------------
+def _listing_client(detail_rows):
+    def handler(request):
+        return httpx.Response(200, json={"data": {"getListings2": detail_rows}})
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_multisearch_item_carries_property_id():
+    rec = multisearch_item_to_record(_item("1-test-st-calgary-ab", id="prop123", livingArea=1800))
+    assert rec.property_id == "prop123"
+
+
+def test_enrich_subject_fills_from_mls_listing():
+    rec = PropertyRecord(address="X", property_id="prop123", beds=3, garage=None, property_type=None)
+    rows = [{"details": {"numGarageSpaces": "2", "numBedrooms": "3", "numBedroomsPlus": "0",
+                         "numBathrooms": "3", "numBathroomsPlus": "1", "propertyType": "Detached"},
+             "condominium": {"parkingType": "Double Garage Detached"}}]
+    out = HonestDoorCompSource(client=_listing_client(rows)).enrich_subject(rec)
+    assert out.garage == 2 and out.property_type == "detached"
+    assert out.parking_type == "Double Garage Detached" and out.baths == 3.1
+
+
+def test_enrich_subject_noop_without_property_id():
+    rec = PropertyRecord(address="X", garage=None)
+    out = HonestDoorCompSource(client=_listing_client([])).enrich_subject(rec)
+    assert out.garage is None and out.parking_type is None
+
+
+def test_enrich_subject_noop_when_no_listing():
+    rec = PropertyRecord(address="X", property_id="p", garage=None, property_type=None)
+    out = HonestDoorCompSource(client=_listing_client([])).enrich_subject(rec)
+    assert out.garage is None and out.property_type is None
+
+
+def test_base_compsource_enrich_subject_is_identity():
+    from tests.stubs import StubCompSource
+    rec = PropertyRecord(address="X", garage=None)
+    assert StubCompSource().enrich_subject(rec) is rec

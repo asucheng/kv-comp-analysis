@@ -19,7 +19,8 @@ class Subject(BaseModel):
     year_built: Optional[int] = None
     beds: Optional[float] = None
     baths: Optional[float] = None
-    garage: Optional[int] = None     # garage spaces (HonestDoor garageSpaces; often unknown)
+    garage: Optional[int] = None     # garage spaces (MLS numGarageSpaces, else parsed from parking_type)
+    parking_type: Optional[str] = None  # MLS descriptive parking, e.g. "Double Garage Detached"
     lot_sf: Optional[float] = None
     property_type: Optional[PropertyType] = None
     hd_estimate: Optional[float] = None

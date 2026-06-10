@@ -35,9 +35,19 @@ _MAX_PAGES = 40           # safety stop (~12k rows) — a 3km×12mo window never
 _MULTISEARCH_QUERY = (
     "query($filter: MultiSearchFilterInput!){ "
     "getMultiSearch(filter: $filter){ properties{ item{ "
-    "slug livingArea bedroomsTotal bedroomsTotalEst bathroomsTotal bathroomsTotalEst "
+    "id slug livingArea bedroomsTotal bedroomsTotalEst bathroomsTotal bathroomsTotalEst "
     "garageSpaces yearBuilt "
     "lotSizeArea neighbourhoodName predictedValue location{ lat lon } } } } }"
+)
+
+# Fetch a single property's MLS listing(s) by propertyId (newest first) to enrich the
+# resolved subject with MLS attributes the public Property entity lacks (garage,
+# property type, parking). Returns nothing when the subject has no listing on record.
+_LISTING_BY_PROPERTY_QUERY = (
+    "query($filter: Listings2ExtendedFilterInput, $take: Int, $order: Listing2OrderInput){ "
+    "getListings2(take: $take, filter: $filter, order: $order){ "
+    "details { numGarageSpaces numBedrooms numBedroomsPlus numBathrooms numBathroomsPlus propertyType } "
+    "condominium { parkingType } } }"
 )
 _SQM_TO_SQFT = 10.7639
 
@@ -135,7 +145,8 @@ def multisearch_item_to_record(item: dict[str, Any]) -> PropertyRecord:
     lot = item.get("lotSizeArea")
     slug = item.get("slug")
     return PropertyRecord(
-        address=_slug_to_address(slug), slug=slug, resolved_address=_slug_to_address(slug),
+        address=_slug_to_address(slug), slug=slug, property_id=item.get("id"),
+        resolved_address=_slug_to_address(slug),
         community=item.get("neighbourhoodName"),
         lat=loc.get("lat"), lng=loc.get("lon"),
         sqft=item.get("livingArea"),
@@ -233,6 +244,31 @@ class HonestDoorCompSource(CompSource):
         props = (data.get("getMultiSearch") or {}).get("properties") or []
         return [multisearch_item_to_record(p["item"]) for p in props
                 if (p.get("item") or {}).get("slug")]
+
+    def enrich_subject(self, record: PropertyRecord) -> PropertyRecord:
+        """Fill the resolved subject's MLS attributes (garage, property type, parking,
+        and more-reliable bed/bath) from its own listing, fetched by propertyId. The
+        public `getMultiSearch` Property is sparse on these; the listing is not. No-op
+        when the subject has no propertyId or no listing on record."""
+        if not record.property_id:
+            return record
+        data = self._query(_LISTING_BY_PROPERTY_QUERY, {
+            "filter": {"propertyId": record.property_id}, "take": 1,
+            "order": {"soldDate": "desc"}})
+        rows = data.get("getListings2") or []
+        if not rows:
+            return record
+        details = rows[0].get("details") or {}
+        parking_type = (rows[0].get("condominium") or {}).get("parkingType")
+        garage = _first(_to_num(details.get("numGarageSpaces")),
+                        _garage_from_parking(parking_type), record.garage)
+        return record.model_copy(update={
+            "beds": _first(_mls_beds(details), record.beds),
+            "baths": _first(_mls_baths(details), record.baths),
+            "garage": int(garage) if garage is not None else None,
+            "parking_type": parking_type or record.parking_type,
+            "property_type": _map_property_type(details.get("propertyType")) or record.property_type,
+        })
 
     def recent_sales(self, *, lat: float, lng: float, radius_km: float,
                      lookback_months: int, as_of: date) -> list[Comp]:

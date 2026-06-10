@@ -19,7 +19,7 @@ FETCH_RADIUS_KM = 3.0
 FETCH_LOOKBACK_MONTHS = 12
 
 _SUBJECT_FIELDS = ["community", "lat", "lng", "sqft", "year_built",
-                   "beds", "baths", "garage", "lot_sf", "property_type"]
+                   "beds", "baths", "garage", "parking_type", "lot_sf", "property_type"]
 
 
 @dataclass
@@ -36,6 +36,10 @@ class Tools:
         # attributes; the agent confirms `resolved_address` before valuing.
         candidates = self.source.search_subject(address)
         top = candidates[0] if candidates else None
+        # Enrich the chosen subject from its own MLS listing (garage, property type,
+        # parking, more-reliable bed/bath) — the search result alone is sparse on these.
+        if top is not None:
+            top = self.source.enrich_subject(top)
         rec = top or PropertyRecord(address=address)
         data = {"address": address}
         provenance: dict[str, str] = {}
