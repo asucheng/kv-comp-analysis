@@ -99,13 +99,25 @@ _GARAGE_WORDS = {"single": 1, "double": 2, "triple": 3, "quadruple": 4, "quad": 
 
 
 def _garage_from_parking(parking_type: Optional[str]) -> Optional[int]:
-    """Extract a garage stall count from a descriptive parkingType (e.g.
-    'Double Garage Detached' -> 2). Returns None when there's no '<count> garage' phrase
-    (driveway/off-street/underground parking carries no countable garage)."""
+    """Garage / dedicated-parking stall count from a descriptive MLS parkingType:
+      'Double Garage Detached'                  -> 2  (count + 'garage')
+      'Underground' / 'Carport' / 'Parkade'     -> 1  (covered dedicated stall; counts, esp. condos)
+      'Off Street' / 'Parking Pad' / 'Driveway' -> 0  (surface parking only — genuinely no garage)
+      'Attached Garage' (no parseable count)    -> None (has one, count unknown)
+      missing / empty                           -> None (unknown)
+    Distinguishing 0 (known: no garage) from None (unknown) is what lets the garage
+    adjustment fire for a no-garage subject instead of being skipped."""
     if not parking_type:
         return None
-    m = re.search(r"(single|double|triple|quadruple|quad)\s+garage", parking_type.lower())
-    return _GARAGE_WORDS[m.group(1)] if m else None
+    p = parking_type.lower()
+    m = re.search(r"(single|double|triple|quadruple|quad)\s+garage", p)
+    if m:
+        return _GARAGE_WORDS[m.group(1)]
+    if "garage" in p:
+        return None                      # has a garage, but no count we can trust
+    if "underground" in p or "parkade" in p or "carport" in p:
+        return 1                         # covered, dedicated stall (counts)
+    return 0                             # surface parking only -> no garage
 
 
 def _map_property_type(pt: Optional[str]):

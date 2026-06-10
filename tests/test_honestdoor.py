@@ -286,14 +286,17 @@ def test_mls_bath_convention_total_minus_half():
     assert listing_to_comp(_mls_row(baths="3", baths_plus="1")).baths == 2.1   # 2 full + 1 half
 
 
-def test_garage_falls_back_to_parking_type_word():
-    assert listing_to_comp(_mls_row(num_garage=None, parking="Single Garage")).garage == 1
-    assert listing_to_comp(_mls_row(num_garage=None, parking="Triple Garage Attached")).garage == 3
-
-
-def test_garage_none_when_no_count_and_no_garage_word():
-    c = listing_to_comp(_mls_row(num_garage=None, parking="Gravel Driveway,Off Street", prop_garage=None))
-    assert c.garage is None
+def test_garage_inference_from_parking_type():
+    g = lambda pt: listing_to_comp(_mls_row(num_garage=None, parking=pt, prop_garage=None)).garage
+    assert g("Single Garage") == 1
+    assert g("Triple Garage Attached") == 3
+    assert g("Double Garage Attached,Driveway") == 2     # count wins even with a driveway listed
+    assert g("Off Street") == 0                          # surface parking -> known no garage
+    assert g("Gravel Driveway,Off Street,Parking Pad") == 0
+    assert g("Underground") == 1                         # covered dedicated stall (condos) counts
+    assert g("Heated Underground,Stall") == 1
+    assert g("Attached Garage") is None                  # has a garage, count unknown
+    assert g("") is None                                 # no info -> unknown
 
 
 def test_property_type_mapping_variants():
