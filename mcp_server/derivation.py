@@ -37,35 +37,71 @@ def _clamp(v: float, c: float) -> float:
     return max(-c, min(c, v))
 
 
-def derive_time_trend(comps: list[Comp], *, as_of: date, clamp: float) -> Derivation:
-    """Market-conditions %/month. Grouping of sales (primary) -> regression (small-N fallback)."""
+def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date, clamp: float) -> Derivation:
+    """Market %/month, measured on SIZE-CONTROLLED data so a size-imbalanced comp set
+    can't masquerade as a price trend.
+    Rung 1: size-matched pairs across time (size held constant by selection).
+    Rung 2: grouping of sales on size-normalized $/sqft.
+    Rung 3: least-squares on size-normalized $/sqft (small-N fallback)."""
     if len(comps) < 4:
         return _none("fewer than 4 comps; market trend not estimated")
     months = [max(months_between(c.sold_date, as_of), 0) for c in comps]
-    ppsf = [c.price_per_sqft for c in comps]
+    n = len(comps)
 
-    # Grouping: split at median months into recent vs older; need >=2 each and a time gap.
+    # Rung 1: size-matched pairs across time. Same size (+/-5%) but different sale dates,
+    # so any $/sqft difference is pure market movement.
+    SIZE_TOL = 0.05
+    rates: list[float] = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            a, b = comps[i], comps[j]
+            big = max(a.sqft, b.sqft)
+            if big == 0 or abs(a.sqft - b.sqft) / big > SIZE_TOL:
+                continue
+            mi, mj = months[i], months[j]
+            if mi == mj:
+                continue
+            (older, om), (recent, rm) = ((a, mi), (b, mj)) if mi > mj else ((b, mj), (a, mi))
+            op, rp = older.price_per_sqft, recent.price_per_sqft
+            if op <= 0:
+                continue
+            rates.append(((rp - op) / op) / (om - rm))
+    if rates:
+        raw = median(rates)
+        per_month = _clamp(raw, clamp)
+        conf = "low" if per_month != raw else ("high" if len(rates) >= 2 else "medium")
+        return Derivation(round(per_month, 5), "matched_pair", "article-method",
+                          f"{len(rates)} size-matched pair(s) across time", conf)
+
+    # Rungs 2-3: size-normalize each price to the subject's size, then group / regress.
+    marg = linreg_slope([c.sqft for c in comps], [c.sold_price for c in comps])
+    marg = marg if (marg is not None and 0 < marg < 1000) else 0.0
+    sqft0 = subject.sqft or (sum(c.sqft for c in comps) / n)
+    norm = [(c.sold_price - (c.sqft - sqft0) * marg) / sqft0 for c in comps]
+
     cut = median(months)
-    recent = [(m, p) for m, p in zip(months, ppsf) if m <= cut]
-    older = [(m, p) for m, p in zip(months, ppsf) if m > cut]
+    recent = [(m, p) for m, p in zip(months, norm) if m <= cut]
+    older = [(m, p) for m, p in zip(months, norm) if m > cut]
     if len(recent) >= 2 and len(older) >= 2:
         rm, rp = median([m for m, _ in recent]), median([p for _, p in recent])
         om, op = median([m for m, _ in older]), median([p for _, p in older])
         gap = om - rm
         if gap > 0 and op > 0:
-            per_month = _clamp(((rp - op) / op) / gap, clamp)
-            ev = (f"recent comps median ${rp:.0f}/sqft (~{rm:.0f} mo) vs older "
+            raw = ((rp - op) / op) / gap
+            per_month = _clamp(raw, clamp)
+            conf = "low" if per_month != raw else "medium"
+            ev = (f"size-normalized: recent ${rp:.0f}/sqft (~{rm:.0f} mo) vs older "
                   f"${op:.0f}/sqft (~{om:.0f} mo) over {gap:.0f} mo")
-            return Derivation(round(per_month, 5), "grouping", "article-method", ev, "medium")
+            return Derivation(round(per_month, 5), "grouping", "article-method", ev, conf)
 
-    # Regression fallback: slope of ppsf vs months-ago, normalized to a fraction.
-    slope = linreg_slope([-m for m in months], ppsf)   # more-recent = larger x
+    slope = linreg_slope([-m for m in months], norm)
     if slope is None:
         return _none("no time variation across comps")
-    my = mean(ppsf)
-    per_month = _clamp(slope / my if my else 0.0, clamp)
+    my = mean(norm)
+    raw = slope / my if my else 0.0
+    per_month = _clamp(raw, clamp)
     return Derivation(round(per_month, 5), "regression", "article-method",
-                      f"least-squares over {len(comps)} comps (small-N fallback)", "low")
+                      f"least-squares on size-normalized $/sqft ({n} comps, small-N)", "low")
 
 
 def _matched_pair_ppsf(subject: Subject, comps: list[Comp], prices: list[float]) -> Optional[Derivation]:
@@ -149,7 +185,7 @@ def derive_feature_unit(subject: Subject, comps: list[Comp],
     return _none(f"{factor} signal too flat; not adjusted")
 
 
-def compute_disclosures(subject: Subject, comps: list[Comp]) -> list[Disclosure]:
+def compute_disclosures(subject: Subject, comps: list[Comp], *, as_of: date) -> list[Disclosure]:
     """Tier-2 imbalance caveats: dimensions we filter but don't adjust."""
     out: list[Disclosure] = []
 
@@ -164,8 +200,8 @@ def compute_disclosures(subject: Subject, comps: list[Comp]) -> list[Disclosure]
                 skew=f"comps average {abs(avg_gap):.0f} yr {'older' if avg_gap>0 else 'newer'} than subject",
                 direction=direction,
                 caveat=("Age is controlled by the +/-10yr filter, not adjusted; an "
-                        f"{'older' if avg_gap>0 else 'newer'} comp set may {direction} a "
-                        "newer subject. Condition/rehab is out of scope.")))
+                        f"{'older' if avg_gap>0 else 'newer'} comp set may {direction} "
+                        "the subject's value. Condition/rehab is out of scope.")))
         else:
             out.append(Disclosure(factor="age", skew="comps balanced in vintage",
                                   direction="unknown", caveat="No material vintage skew."))
@@ -178,4 +214,24 @@ def compute_disclosures(subject: Subject, comps: list[Comp]) -> list[Disclosure]
             direction="unknown",
             caveat=("Distance is filtered (<=3km), not adjusted, and we lack per-community "
                     "data; if comps sit in a different-value pocket the baseline may be biased.")))
+
+    # Time-mix: recent vs older comps differing systematically in size can confound the
+    # trend even after size-control; surface it.
+    if len(comps) >= 4:
+        ms = [max(months_between(c.sold_date, as_of), 0) for c in comps]
+        cut = median(ms)
+        recent_sqft = [c.sqft for c, m in zip(comps, ms) if m <= cut]
+        older_sqft = [c.sqft for c, m in zip(comps, ms) if m > cut]
+        if recent_sqft and older_sqft:
+            rs, os_ = mean(recent_sqft), mean(older_sqft)
+            if os_ and abs(rs - os_) / os_ >= 0.08:
+                bigger = "larger" if rs > os_ else "smaller"
+                out.append(Disclosure(
+                    factor="time",
+                    skew=f"recent comps average {bigger} ({rs:.0f} vs {os_:.0f} sqft)",
+                    direction="unknown",
+                    caveat=("Recent and older comps differ in size, so the market trend was "
+                            "measured on size-controlled data to avoid a size effect leaking "
+                            "in; still, treat the time figure with extra caution.")))
+
     return out

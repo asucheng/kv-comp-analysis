@@ -27,14 +27,14 @@ def test_time_trend_grouping_detects_rising_market():
               _comp(840_000, d=date(2026, 5, 1))]
     older = [_comp(800_000, d=date(2025, 12, 1)), _comp(820_000, d=date(2026, 1, 1)),
              _comp(810_000, d=date(2026, 2, 1))]
-    dv = derive_time_trend(recent + older, as_of=AS_OF, clamp=0.02)
-    assert dv.method in ("grouping", "regression")
+    dv = derive_time_trend(_subject(sqft=2000), recent + older, as_of=AS_OF, clamp=0.02)
+    assert dv.method in ("matched_pair", "grouping", "regression")
     assert dv.value > 0
     assert -0.02 <= dv.value <= 0.02
 
 
 def test_time_trend_none_when_too_few():
-    dv = derive_time_trend([_comp(800_000)], as_of=AS_OF, clamp=0.02)
+    dv = derive_time_trend(_subject(), [_comp(800_000)], as_of=AS_OF, clamp=0.02)
     assert dv.method == "none" and dv.value == 0.0
 
 
@@ -82,7 +82,7 @@ def test_feature_unit_none_without_variation():
 def test_disclosure_flags_older_comp_skew():
     s = _subject(yb=2015)
     comps = [_comp(700_000, yb=2005), _comp(700_000, yb=2006), _comp(700_000, yb=2007)]
-    ds = compute_disclosures(s, comps)
+    ds = compute_disclosures(s, comps, as_of=AS_OF)
     age = next(d for d in ds if d.factor == "age")
     assert age.direction == "understate"   # comps older -> may understate newer subject
 
@@ -90,6 +90,37 @@ def test_disclosure_flags_older_comp_skew():
 def test_disclosure_quiet_when_balanced():
     s = _subject(yb=2010)
     comps = [_comp(700_000, yb=2009), _comp(700_000, yb=2011), _comp(700_000, yb=2010)]
-    ds = compute_disclosures(s, comps)
+    ds = compute_disclosures(s, comps, as_of=AS_OF)
     age = next((d for d in ds if d.factor == "age"), None)
     assert age is None or age.direction == "unknown"
+
+
+def test_time_trend_not_fooled_by_recent_larger_comps():
+    # Flat market, but recent comps are larger (lower $/sqft). Naive grouping would read
+    # a fake decline; size control must keep the trend near zero, not pinned negative.
+    s = _subject(sqft=1800)
+    older = [Comp(address="o1", lat=51.05, lng=-114.08, sold_price=720_000, sold_date=date(2025,12,1),
+                  sqft=1800, year_built=1985, beds=3, baths=2, garage=2),
+             Comp(address="o2", lat=51.05, lng=-114.08, sold_price=716_000, sold_date=date(2026,1,1),
+                  sqft=1790, year_built=1985, beds=3, baths=2, garage=2)]
+    recent = [Comp(address="r1", lat=51.05, lng=-114.08, sold_price=730_000, sold_date=date(2026,5,1),
+                   sqft=2000, year_built=1985, beds=3, baths=2, garage=2),
+              Comp(address="r2", lat=51.05, lng=-114.08, sold_price=735_000, sold_date=date(2026,6,1),
+                   sqft=2010, year_built=1985, beds=3, baths=2, garage=2)]
+    dv = derive_time_trend(s, older + recent, as_of=AS_OF, clamp=0.02)
+    assert dv.value > -0.02   # not pinned at the negative clamp rail
+    assert abs(dv.value) < 0.015   # close to flat, not a fake double-digit decline
+
+
+def test_time_disclosure_on_size_imbalance():
+    s = _subject(sqft=1800)
+    comps = [Comp(address="o1", lat=51.05, lng=-114.08, sold_price=720_000, sold_date=date(2025,12,1),
+                  sqft=1800, year_built=1985, beds=3, baths=2, garage=2),
+             Comp(address="o2", lat=51.05, lng=-114.08, sold_price=716_000, sold_date=date(2026,1,1),
+                  sqft=1800, year_built=1985, beds=3, baths=2, garage=2),
+             Comp(address="r1", lat=51.05, lng=-114.08, sold_price=730_000, sold_date=date(2026,5,1),
+                  sqft=2100, year_built=1985, beds=3, baths=2, garage=2),
+             Comp(address="r2", lat=51.05, lng=-114.08, sold_price=735_000, sold_date=date(2026,6,1),
+                  sqft=2100, year_built=1985, beds=3, baths=2, garage=2)]
+    ds = compute_disclosures(s, comps, as_of=AS_OF)
+    assert any(d.factor == "time" for d in ds)
