@@ -85,9 +85,14 @@ def _mls_beds(details: dict[str, Any]):
 
 
 def _mls_baths(details: dict[str, Any]):
-    """HonestDoor's X.Y bath convention: X full + Y half -> full + half/10 (e.g. 3 + 1 -> 3.1)."""
-    full = _to_num(details.get("numBathrooms"))
-    return None if full is None else round(full + (_to_num(details.get("numBathroomsPlus")) or 0) / 10, 1)
+    """HonestDoor's X.Y bath convention = full.half. MLS `numBathrooms` is the TOTAL bath
+    count and `numBathroomsPlus` is how many of those are half-baths, so full = total - half
+    (e.g. 3 total / 1 half -> 2 full + 1 half -> 2.1; verified vs HonestDoor's bathroomsTotal)."""
+    total = _to_num(details.get("numBathrooms"))
+    if total is None:
+        return None
+    half = _to_num(details.get("numBathroomsPlus")) or 0
+    return round(max(total - half, 0) + half / 10, 1)
 
 
 _GARAGE_WORDS = {"single": 1, "double": 2, "triple": 3, "quadruple": 4, "quad": 4}

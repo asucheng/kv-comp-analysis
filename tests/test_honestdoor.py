@@ -273,9 +273,17 @@ def _mls_row(num_garage=None, parking="Double Garage Detached", ptype="Detached"
 def test_listing_to_comp_uses_mls_details():
     c = listing_to_comp(_mls_row(num_garage="2"))
     assert c.garage == 2                       # from details.numGarageSpaces
-    assert c.beds == 3 and c.baths == 3.1      # numBathrooms 3 + numBathroomsPlus 1 -> 3.1
+    assert c.beds == 3                         # numBedrooms 3 + numBedroomsPlus 0
+    assert c.baths == 2.1                      # 3 total - 1 half = 2 full + 1 half -> 2.1
     assert c.property_type == "detached"
     assert c.parking_type == "Double Garage Detached"
+
+
+def test_mls_bath_convention_total_minus_half():
+    # numBathrooms is the TOTAL count; numBathroomsPlus is how many are half-baths.
+    assert listing_to_comp(_mls_row(baths="2", baths_plus="0")).baths == 2.0   # 2 full
+    assert listing_to_comp(_mls_row(baths="4", baths_plus="1")).baths == 3.1   # 3 full + 1 half
+    assert listing_to_comp(_mls_row(baths="3", baths_plus="1")).baths == 2.1   # 2 full + 1 half
 
 
 def test_garage_falls_back_to_parking_type_word():
@@ -328,7 +336,7 @@ def test_enrich_subject_fills_from_mls_listing():
              "condominium": {"parkingType": "Double Garage Detached"}}]
     out = HonestDoorCompSource(client=_listing_client(rows)).enrich_subject(rec)
     assert out.garage == 2 and out.property_type == "detached"
-    assert out.parking_type == "Double Garage Detached" and out.baths == 3.1
+    assert out.parking_type == "Double Garage Detached" and out.baths == 2.1  # 3 total - 1 half
 
 
 def test_enrich_subject_noop_without_property_id():
