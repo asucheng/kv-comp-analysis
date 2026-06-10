@@ -59,3 +59,27 @@ def test_grade_inconclusive_without_avm():
 def test_grade_flags_resolved_mismatch():
     v = grade("a", "l", _ok(500_000, "999 Other St"), 500_000, "61 Auburn Meadows View SE Calgary AB")
     assert v.verdict == "FLAG"
+
+
+from eval.verify import format_report, fetch_avm
+
+
+def test_format_report_has_header_and_rows():
+    vs = [
+        Verdict("138 Cranberry Place SE", "detached", 548_000, 552_000, -0.007, "PASS", ""),
+        Verdict("2028 41 Avenue SW", "infill", 1_780_000, 2_130_800, -0.164, "FAIL", "-16.4% vs AVM exceeds +/-10%"),
+    ]
+    out = format_report(vs)
+    assert "1/2 pass" in out
+    assert "138 Cranberry Place SE" in out and "2028 41 Avenue SW" in out
+    assert "median |delta|" in out
+
+
+def test_fetch_avm_uses_injected_tools():
+    class _Subj:
+        hd_estimate = 484_000
+        resolved_address = "61 Auburn Meadows View SE Calgary AB"
+    class _Tools:
+        def get_subject(self, addr): return _Subj()
+    avm, resolved = fetch_avm("61 Auburn Meadows View SE Calgary", tools=_Tools())
+    assert avm == 484_000 and resolved.startswith("61 Auburn Meadows View")
