@@ -213,25 +213,56 @@ never leak into the math. Genuine non-arm's-length/outlier *exclusions* are qual
 
 ## 10. Components touched
 
-- **`mcp_server/models.py`** — restructure `Adjustment`; add `Disclosure`; retire `AdjustmentRules`
-  constants (`size_elast`, `age_rate`, weight coeffs); `CompAdjustment`/`Estimate` carry new payload.
-- **`mcp_server/estimate.py`** — new `derivation` logic (per-dimension hierarchy walkers returning value +
-  method + evidence + confidence); restructure `adjust_comp` to the sequenced price math; `reconcile` →
-  median + disclosures; remove `comp_weight`; keep `estimate_trend` as the time regression rung.
-- **`skill/comp-analysis/references/methodology.md`** — rewrite to the two-tier framework + hierarchy +
-  attribution discipline; cite the two articles.
-- **`skill/comp-analysis/references/house-rules.md`** — note which criteria are adjusted vs bracketed.
-- **`skill/comp-analysis/SKILL.md`** — output section: per-dimension method/source tags, Tier-2
-  disclosures, out-of-scope rehab note; full-comp-set guardrail.
+The work splits cleanly along the project's architecture: **MCP = deterministic math; Skill =
+methodology, judgment, narrative.** Design follows the `mcp-server-dev` and `skill-creator` plugin
+guidance.
 
-## 11. Testing
+### 10.1 MCP changes — grouped by intent, not API
 
-- Unit-test each derivation rung with hand-built comp sets (clean matched pair; grouped; small-N
-  regression fallback; no-variation → no adjustment; unstable → fall-through).
-- Test the sequence/netting (garage isolated only after size netted — the article's $15k example).
-- Test median reconciliation and range.
-- Test Tier-2 disclosures fire on skewed sets and stay quiet on balanced sets.
-- Keep the existing hold-one-out accuracy eval as a regression guard.
+**Tool-surface decision: no new tool.** The surface stays the four intent-mapped tools
+(`get_subject` → `find_comps` → `estimate_value` → `cross_check`). Per the "group by intent, not like an
+API" rule, mechanical helpers like `calculate_matched_pairs` / `compute_marginal_ppsf` would be
+API-shaped internals, not intents — so the derivation lives **inside** the `estimate_value` valuation
+intent, exposed in its output and overridable by parameter.
+
+- **`mcp_server/models.py`** — restructure `Adjustment` (add `method_used`, `source_type`, `value_dollar`,
+  `evidence`, per-line `confidence`); add `Disclosure`; retire `AdjustmentRules` constants (`size_elast`,
+  `age_rate`, weight coeffs); `CompAdjustment`/`Estimate` carry the new payload.
+- **`mcp_server/derivation.py` (new, internal module — NOT a tool)** — per-dimension hierarchy walkers
+  (`derive_time_trend`, `derive_marginal_ppsf`, `derive_feature_value`, `compute_disclosures`), each
+  returning value + method + evidence + confidence.
+- **`mcp_server/estimate.py`** — restructure `adjust_comp` to the sequenced price math; `reconcile` →
+  median + attached disclosures; **remove `comp_weight`**; keep `estimate_trend` as the time regression rung.
+- **`mcp_server/server.py`** — `estimate_value` keeps its single intent but gains: **structured output**
+  (`outputSchema` + `structuredContent`, with text fallback) for the transparency payload; an
+  **`overrides` parameter** (replacing the retired `rules` constants) so a human can correct a *derived*
+  coefficient and re-value — the in-loop override point, without a new tool. Add `readOnlyHint: true` +
+  `title` annotations to **all** tools (everything here is pure read computation); tighten schemas and add
+  sibling-disambiguating descriptions.
+
+### 10.2 Skill changes — content, in skill-creator style
+
+Keep the progressive-disclosure structure (lean `SKILL.md` + `references/`); changes are content,
+imperative, *explaining the why* (no heavy MUSTs), `SKILL.md` < 500 lines.
+
+- **`skill/comp-analysis/references/methodology.md`** — rewrite to the two-tier framework + method
+  hierarchy + attribution discipline; cite the two articles.
+- **`skill/comp-analysis/references/house-rules.md`** — mark each criterion *adjusted* vs *bracketed*.
+- **`skill/comp-analysis/SKILL.md`** — workflow (pass the **full** comp set; the inspect→override→
+  re-estimate human loop; cross-check); output format (per-line method/source tags, Tier-2 disclosures,
+  out-of-scope rehab note); judgment rules (excluding non-arm's-length comps; reading a disclosure;
+  tagging `article-method` vs `our-judgment`).
+
+## 11. Testing & validation
+
+- **MCP unit tests** — each derivation rung with hand-built comp sets (clean matched pair; grouped; small-N
+  regression fallback; no-variation → no adjustment; unstable → fall-through); the sequence/netting
+  (garage isolated only after size netted — the article's $15k example); median reconciliation and range;
+  Tier-2 disclosures fire on skewed sets and stay quiet on balanced sets; `overrides` parameter respected.
+- **Regression guard** — keep the existing hold-one-out accuracy eval.
+- **Skill validation (post-implementation)** — run the `skill-creator` eval loop: a few realistic test
+  prompts, with-skill vs baseline, the benchmark viewer for qualitative + quantitative review; then
+  description-optimize the SKILL.md frontmatter.
 
 ## 12. Non-goals
 
