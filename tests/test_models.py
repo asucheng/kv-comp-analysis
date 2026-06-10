@@ -20,12 +20,11 @@ def test_criteria_defaults_match_sams_rules():
         == (3.0, 0.20, 6, 10, 4)
 
 
-def test_criteria_secondary_toggles_default_on_except_type():
-    # beds/baths/garage matching is strict-by-default (null-safe) so the ladder can
-    # relax it; property-type matching stays OFF (subject type is often unknown and
-    # the filter is not null-safe).
+def test_criteria_secondary_toggles_all_off_by_default():
+    # Comp selection uses only Sam's 5; bed/bath/garage are handled by the adjustment
+    # engine, not by filtering — so all exact-match toggles default OFF.
     c = Criteria()
-    assert c.match_beds is True and c.match_baths is True and c.match_garage is True
+    assert c.match_beds is False and c.match_baths is False and c.match_garage is False
     assert c.match_type is False
 
 
@@ -36,8 +35,33 @@ def test_relaxation_records_a_boolean_toggle():
     assert r.model_dump(by_alias=True) == {"step": "match_garage", "from": True, "to": False}
 
 
-def test_adjustment_rules_defaults():
+def test_adjustment_rules_trimmed_to_config_only():
+    from mcp_server.models import AdjustmentRules
     r = AdjustmentRules()
-    assert r.age_rate == 0.005
-    assert r.size_elast == 0.20
-    assert r.trend_clamp == 0.02
+    assert (r.trend_clamp, r.min_comps, r.outlier_iqr, r.drop_outliers) == (0.02, 4, 1.5, False)
+    # invented constants are gone
+    assert not hasattr(r, "age_rate")
+    assert not hasattr(r, "size_elast")
+    assert not hasattr(r, "weight_a")
+
+
+def test_adjustment_payload_shape():
+    from mcp_server.models import Adjustment
+    a = Adjustment(factor="size", method_used="grouping", source_type="article-method",
+                   value_dollar=-10000.0, evidence="8 comps, grouped", confidence="medium",
+                   rationale="200 sqft larger x $50/sqft")
+    assert a.value_pct is None and a.value_dollar == -10000.0
+
+
+def test_disclosure_shape():
+    from mcp_server.models import Disclosure
+    d = Disclosure(factor="age", skew="comps avg 5 yr older", direction="understate",
+                   caveat="older set may understate a newer subject")
+    assert d.source_type == "our-judgment"
+
+
+def test_overrides_all_optional():
+    from mcp_server.models import Overrides
+    o = Overrides()
+    assert o.marginal_ppsf is None and o.garage_value is None
+    assert Overrides(marginal_ppsf=50.0).marginal_ppsf == 50.0

@@ -5,7 +5,8 @@ import httpx
 import pytest
 from mcp_server.compsource.base import CompSource, PropertyRecord
 from mcp_server.compsource.honestdoor import (
-    HonestDoorCompSource, listing_to_comp, _slug_to_address, _SQM_TO_SQFT)
+    HonestDoorCompSource, listing_to_comp, multisearch_item_to_record,
+    _slug_to_address, _SQM_TO_SQFT)
 
 
 def _multisearch_client(items, calls=None):
@@ -210,3 +211,150 @@ def test_live_get_property_resolves_subject_from_address():
     assert rec.lat and rec.lng, "expected coordinates from the property record"
     print(f"LIVE subject: {rec.sqft}sqft beds {rec.beds} baths {rec.baths} "
           f"yr {rec.year_built} avm {rec.hd_estimate}")
+
+
+# ---------------------------------------------------------------------------
+# Estimated bed/bath fallback (HonestDoor populates *Est when the exact field is
+# null — ~37% of sold rows; coalesce exact-first so comps aren't left blank).
+# ---------------------------------------------------------------------------
+def _row(bed=None, bed_est=None, bath=None, bath_est=None):
+    return {"type": "SALE", "soldPrice": "700000", "soldDate": "2026-01-10T00:00:00Z",
+            "address": {"streetNumber": "1", "streetName": "Test St"},
+            "property": {"livingArea": 1800, "bedroomsTotal": bed, "bedroomsTotalEst": bed_est,
+                         "bathroomsTotal": bath, "bathroomsTotalEst": bath_est,
+                         "garageSpaces": None, "yearBuilt": 2010,
+                         "location": {"lat": 51.0, "lon": -114.0}}}
+
+
+def test_listing_to_comp_falls_back_to_estimated_bed_bath():
+    c = listing_to_comp(_row(bed=None, bed_est=4, bath=None, bath_est=2))
+    assert c is not None
+    assert c.beds == 4 and c.baths == 2          # recovered from *Est
+
+
+def test_listing_to_comp_prefers_exact_over_estimate():
+    c = listing_to_comp(_row(bed=3, bed_est=5, bath=2.1, bath_est=2))
+    assert c.beds == 3 and c.baths == 2.1        # exact wins when present
+
+
+def test_multisearch_item_falls_back_to_estimated_bed_bath():
+    item = {"slug": "1-test-st-calgary-ab", "livingArea": 1800, "yearBuilt": 2010,
+            "bedroomsTotal": None, "bedroomsTotalEst": 4,
+            "bathroomsTotal": None, "bathroomsTotalEst": 2,
+            "garageSpaces": None, "location": {"lat": 51.0, "lon": -114.0}}
+    rec = multisearch_item_to_record(item)
+    assert rec.beds == 4 and rec.baths == 2
+
+    item_exact = {**item, "bedroomsTotal": 3, "bathroomsTotal": 2.1}
+    rec2 = multisearch_item_to_record(item_exact)
+    assert rec2.beds == 3 and rec2.baths == 2.1
+
+
+# ---------------------------------------------------------------------------
+# MLS details / parking-type sourcing (option A): the bulk getListings2 node
+# also carries MLS `details` + `condominium.parkingType` — far better coverage
+# (garage, property type, bed/bath) than the sparse public `property` entity.
+# ---------------------------------------------------------------------------
+def _mls_row(num_garage=None, parking="Double Garage Detached", ptype="Detached",
+             beds="3", beds_plus="0", baths="3", baths_plus="1",
+             prop_garage=None, prop_bed=None, prop_bed_est=None):
+    return {"type": "SALE", "soldPrice": "700000", "soldDate": "2026-01-10T00:00:00Z",
+            "address": {"streetNumber": "1", "streetName": "Test St"},
+            "details": {"numGarageSpaces": num_garage, "numBedrooms": beds,
+                        "numBedroomsPlus": beds_plus, "numBathrooms": baths,
+                        "numBathroomsPlus": baths_plus, "propertyType": ptype},
+            "condominium": {"parkingType": parking},
+            "property": {"livingArea": 1800, "bedroomsTotal": prop_bed,
+                         "bedroomsTotalEst": prop_bed_est, "bathroomsTotal": None,
+                         "bathroomsTotalEst": None, "garageSpaces": prop_garage,
+                         "yearBuilt": 2010, "location": {"lat": 51.0, "lon": -114.0}}}
+
+
+def test_listing_to_comp_uses_mls_details():
+    c = listing_to_comp(_mls_row(num_garage="2"))
+    assert c.garage == 2                       # from details.numGarageSpaces
+    assert c.beds == 3                         # numBedrooms 3 + numBedroomsPlus 0
+    assert c.baths == 2.1                      # 3 total - 1 half = 2 full + 1 half -> 2.1
+    assert c.property_type == "detached"
+    assert c.parking_type == "Double Garage Detached"
+
+
+def test_mls_bath_convention_total_minus_half():
+    # numBathrooms is the TOTAL count; numBathroomsPlus is how many are half-baths.
+    assert listing_to_comp(_mls_row(baths="2", baths_plus="0")).baths == 2.0   # 2 full
+    assert listing_to_comp(_mls_row(baths="4", baths_plus="1")).baths == 3.1   # 3 full + 1 half
+    assert listing_to_comp(_mls_row(baths="3", baths_plus="1")).baths == 2.1   # 2 full + 1 half
+
+
+def test_garage_inference_from_parking_type():
+    g = lambda pt: listing_to_comp(_mls_row(num_garage=None, parking=pt, prop_garage=None)).garage
+    assert g("Single Garage") == 1
+    assert g("Triple Garage Attached") == 3
+    assert g("Double Garage Attached,Driveway") == 2     # count wins even with a driveway listed
+    assert g("Off Street") == 0                          # surface parking -> known no garage
+    assert g("Gravel Driveway,Off Street,Parking Pad") == 0
+    assert g("Underground") == 1                         # covered dedicated stall (condos) counts
+    assert g("Heated Underground,Stall") == 1
+    assert g("Attached Garage") is None                  # has a garage, count unknown
+    assert g("") is None                                 # no info -> unknown
+
+
+def test_property_type_mapping_variants():
+    assert listing_to_comp(_mls_row(ptype="Semi Detached (Half Duplex)")).property_type == "semi"
+    assert listing_to_comp(_mls_row(ptype="Row/Townhouse")).property_type == "townhouse"
+    assert listing_to_comp(_mls_row(ptype="Apartment")).property_type == "condo"
+    assert listing_to_comp(_mls_row(ptype="Detached")).property_type == "detached"
+
+
+def test_falls_back_to_property_when_no_mls_details():
+    row = {"type": "SALE", "soldPrice": "700000", "soldDate": "2026-01-10T00:00:00Z",
+           "address": {"streetNumber": "1", "streetName": "Test St"},
+           "property": {"livingArea": 1800, "bedroomsTotal": None, "bedroomsTotalEst": 4,
+                        "bathroomsTotal": None, "bathroomsTotalEst": 2, "garageSpaces": 3,
+                        "yearBuilt": 2010, "location": {"lat": 51.0, "lon": -114.0}}}
+    c = listing_to_comp(row)
+    assert c.beds == 4 and c.baths == 2 and c.garage == 3   # *Est + property fallback
+    assert c.parking_type is None
+
+
+# ---------------------------------------------------------------------------
+# Subject MLS enrichment: resolve the subject's own MLS listing by propertyId
+# so its garage/property_type/parking/bed-bath come from MLS, not the sparse entity.
+# ---------------------------------------------------------------------------
+def _listing_client(detail_rows):
+    def handler(request):
+        return httpx.Response(200, json={"data": {"getListings2": detail_rows}})
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_multisearch_item_carries_property_id():
+    rec = multisearch_item_to_record(_item("1-test-st-calgary-ab", id="prop123", livingArea=1800))
+    assert rec.property_id == "prop123"
+
+
+def test_enrich_subject_fills_from_mls_listing():
+    rec = PropertyRecord(address="X", property_id="prop123", beds=3, garage=None, property_type=None)
+    rows = [{"details": {"numGarageSpaces": "2", "numBedrooms": "3", "numBedroomsPlus": "0",
+                         "numBathrooms": "3", "numBathroomsPlus": "1", "propertyType": "Detached"},
+             "condominium": {"parkingType": "Double Garage Detached"}}]
+    out = HonestDoorCompSource(client=_listing_client(rows)).enrich_subject(rec)
+    assert out.garage == 2 and out.property_type == "detached"
+    assert out.parking_type == "Double Garage Detached" and out.baths == 2.1  # 3 total - 1 half
+
+
+def test_enrich_subject_noop_without_property_id():
+    rec = PropertyRecord(address="X", garage=None)
+    out = HonestDoorCompSource(client=_listing_client([])).enrich_subject(rec)
+    assert out.garage is None and out.parking_type is None
+
+
+def test_enrich_subject_noop_when_no_listing():
+    rec = PropertyRecord(address="X", property_id="p", garage=None, property_type=None)
+    out = HonestDoorCompSource(client=_listing_client([])).enrich_subject(rec)
+    assert out.garage is None and out.property_type is None
+
+
+def test_base_compsource_enrich_subject_is_identity():
+    from tests.stubs import StubCompSource
+    rec = PropertyRecord(address="X", garage=None)
+    assert StubCompSource().enrich_subject(rec) is rec

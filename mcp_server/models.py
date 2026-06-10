@@ -5,6 +5,9 @@ from pydantic import BaseModel, Field, computed_field
 
 PropertyType = Literal["detached", "semi", "townhouse", "condo", "other"]
 Confidence = Literal["high", "medium", "low"]
+AdjMethod = Literal["matched_pair", "grouping", "regression", "cost_convention", "none"]
+SourceType = Literal["article-method", "our-judgment"]
+Direction = Literal["understate", "overstate", "unknown"]
 
 
 class Subject(BaseModel):
@@ -16,7 +19,8 @@ class Subject(BaseModel):
     year_built: Optional[int] = None
     beds: Optional[float] = None
     baths: Optional[float] = None
-    garage: Optional[int] = None     # garage spaces (HonestDoor garageSpaces; often unknown)
+    garage: Optional[int] = None     # garage spaces (MLS numGarageSpaces, else parsed from parking_type)
+    parking_type: Optional[str] = None  # MLS descriptive parking, e.g. "Double Garage Detached"
     lot_sf: Optional[float] = None
     property_type: Optional[PropertyType] = None
     hd_estimate: Optional[float] = None
@@ -37,7 +41,8 @@ class Comp(BaseModel):
     sqft: float
     beds: Optional[float] = None
     baths: Optional[float] = None
-    garage: Optional[int] = None     # garage spaces (HonestDoor garageSpaces; often unknown)
+    garage: Optional[int] = None     # garage spaces (MLS numGarageSpaces, else parsed from parking_type)
+    parking_type: Optional[str] = None  # MLS descriptive parking, e.g. "Double Garage Detached"
     year_built: Optional[int] = None
     property_type: Optional[PropertyType] = None
     distance_km: Optional[float] = None
@@ -54,15 +59,16 @@ class Criteria(BaseModel):
     size_pct: float = 0.20
     lookback_months: int = 6
     age_years: int = 10
-    # Secondary exact-match constraints. beds/baths/garage are strict-by-default and
-    # null-safe (a missing value never drops a comp); the ladder relaxes them when too
-    # few comps qualify. match_type stays off: subject property_type is frequently
-    # unknown and the type filter is not null-safe, so defaulting it on would wrongly
-    # drop every comp.
+    # Secondary exact-match constraints — all OFF by default. Comp SELECTION uses only
+    # Sam's 5 (radius/size/recency/age/$-per-sqft); bed/bath/garage differences are
+    # handled by the adjustment engine in estimate_value (matched-pair -> grouping ->
+    # regression), NOT by filtering — and matching them out would strip the variation
+    # the engine needs to derive their value. Toggles remain available to switch on
+    # per-case (null-safe for beds/baths/garage); the ladder can relax them if enabled.
     match_type: bool = False
-    match_beds: bool = True
-    match_baths: bool = True
-    match_garage: bool = True
+    match_beds: bool = False
+    match_baths: bool = False
+    match_garage: bool = False
     min_comps: int = 4
 
 
@@ -81,21 +87,40 @@ class FindCompsResult(BaseModel):
 
 
 class AdjustmentRules(BaseModel):
-    age_rate: float = 0.005      # per year of age difference (newer = premium)
-    size_elast: float = 0.20     # per unit of fractional size difference
-    trend_clamp: float = 0.02    # max |monthly trend|
-    weight_a: float = 0.5        # distance_km coefficient
-    weight_b: float = 2.0        # |size%| coefficient
-    weight_c: float = 0.05       # |ageΔ years| coefficient
-    weight_d: float = 0.1        # months-old coefficient
-    outlier_iqr: float = 1.5
+    """Config only — no adjustment magnitudes (those are derived from the comps)."""
+    trend_clamp: float = 0.02     # max |monthly time trend|
     min_comps: int = 4
+    outlier_iqr: float = 1.5      # IQR multiplier if drop_outliers is on
+    drop_outliers: bool = False   # median blend tolerates outliers; off by default
+
+
+class Overrides(BaseModel):
+    """Human-supplied coefficients that replace a derived one (inspect-then-override)."""
+    time_pct_per_month: Optional[float] = None
+    marginal_ppsf: Optional[float] = None
+    bed_value: Optional[float] = None
+    bath_value: Optional[float] = None
+    garage_value: Optional[float] = None
 
 
 class Adjustment(BaseModel):
-    factor: str          # "time" | "age" | "size"
-    pct: float           # multiplicative effect, e.g. +0.015
+    factor: str                       # "time" | "size" | "beds" | "baths" | "garage"
+    method_used: AdjMethod
+    source_type: SourceType
+    value_pct: Optional[float] = None     # percentage adjustments (time)
+    value_dollar: Optional[float] = None  # dollar adjustments (size/features)
+    evidence: str
+    confidence: Confidence
     rationale: str
+
+
+class Disclosure(BaseModel):
+    """A Tier-2 (filtered-not-adjusted) caveat: imbalance + likely direction of bias."""
+    factor: str                       # "age" | "location" | "transactional"
+    skew: str
+    direction: Direction
+    caveat: str
+    source_type: SourceType = "our-judgment"
 
 
 class CompAdjustment(BaseModel):
@@ -103,9 +128,8 @@ class CompAdjustment(BaseModel):
     raw_price: float
     raw_ppsf: float
     adjustments: list[Adjustment]
-    adjusted_ppsf: float        # comp's subject-equivalent $/sqft
-    adjusted_price: float       # adjusted_ppsf * subject.sqft (this comp's indication of subject value)
-    weight: float
+    adjusted_price: float             # this comp's indication of subject value
+    adjusted_ppsf: float
 
 
 class Estimate(BaseModel):
@@ -114,6 +138,7 @@ class Estimate(BaseModel):
     high: float
     confidence: Confidence
     per_comp: list[CompAdjustment]
+    disclosures: list[Disclosure] = Field(default_factory=list)
     method_notes: list[str] = Field(default_factory=list)
 
 

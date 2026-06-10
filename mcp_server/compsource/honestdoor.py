@@ -1,5 +1,6 @@
 # mcp_server/compsource/honestdoor.py
 from __future__ import annotations
+import re
 from datetime import date, datetime
 from typing import Any, Optional
 import httpx
@@ -19,7 +20,10 @@ _LISTINGS_QUERY = (
     "getListings2(take: $take, skip: $skip, filter: $filter, order: $order){ "
     "soldPrice soldDate status type "
     "address { streetNumber streetName city neighborhood } "
-    "property { livingArea bedroomsTotal bathroomsTotal garageSpaces yearBuilt location { lat lon } } } }"
+    "details { numGarageSpaces numBedrooms numBedroomsPlus numBathrooms numBathroomsPlus propertyType } "
+    "condominium { parkingType } "
+    "property { livingArea bedroomsTotal bedroomsTotalEst bathroomsTotal bathroomsTotalEst "
+    "garageSpaces yearBuilt location { lat lon } } } }"
 )
 _TAKE = 300                # rows per page (server cap); recent_sales paginates past it
 _MAX_PAGES = 40           # safety stop (~12k rows) — a 3km×12mo window never approaches this
@@ -31,10 +35,107 @@ _MAX_PAGES = 40           # safety stop (~12k rows) — a 3km×12mo window never
 _MULTISEARCH_QUERY = (
     "query($filter: MultiSearchFilterInput!){ "
     "getMultiSearch(filter: $filter){ properties{ item{ "
-    "slug livingArea bedroomsTotal bathroomsTotal garageSpaces yearBuilt "
+    "id slug livingArea bedroomsTotal bedroomsTotalEst bathroomsTotal bathroomsTotalEst "
+    "garageSpaces yearBuilt "
     "lotSizeArea neighbourhoodName predictedValue location{ lat lon } } } } }"
 )
+
+# Fetch a single property's MLS listing(s) by propertyId (newest first) to enrich the
+# resolved subject with MLS attributes the public Property entity lacks (garage,
+# property type, parking). Returns nothing when the subject has no listing on record.
+_LISTING_BY_PROPERTY_QUERY = (
+    "query($filter: Listings2ExtendedFilterInput, $take: Int, $order: Listing2OrderInput){ "
+    "getListings2(take: $take, filter: $filter, order: $order){ "
+    "details { numGarageSpaces numBedrooms numBedroomsPlus numBathrooms numBathroomsPlus propertyType } "
+    "condominium { parkingType } } }"
+)
 _SQM_TO_SQFT = 10.7639
+
+
+def _coalesce_attr(d: dict[str, Any], exact_key: str, est_key: str):
+    """Prefer the confirmed value; fall back to HonestDoor's `*Est` estimate (what the
+    website shows) when the exact field is null. Used as the LAST resort for bed/bath
+    behind the MLS `details` block (see listing_to_comp); the public `property` entity
+    leaves bedroomsTotal/bathroomsTotal null on ~37% of sold records but populates the
+    estimate."""
+    v = d.get(exact_key)
+    return v if v is not None else d.get(est_key)
+
+
+def _first(*vals):
+    """First value that isn't None (keeps a legitimate 0)."""
+    for v in vals:
+        if v is not None:
+            return v
+    return None
+
+
+def _to_num(v):
+    """Parse HonestDoor's stringly-typed numbers ('3', '1447.20') -> float, else None."""
+    try:
+        return float(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _mls_beds(details: dict[str, Any]):
+    """Total bedrooms = above-grade + below-grade (numBedrooms + numBedroomsPlus)."""
+    base = _to_num(details.get("numBedrooms"))
+    return None if base is None else base + (_to_num(details.get("numBedroomsPlus")) or 0)
+
+
+def _mls_baths(details: dict[str, Any]):
+    """HonestDoor's X.Y bath convention = full.half. MLS `numBathrooms` is the TOTAL bath
+    count and `numBathroomsPlus` is how many of those are half-baths, so full = total - half
+    (e.g. 3 total / 1 half -> 2 full + 1 half -> 2.1; verified vs HonestDoor's bathroomsTotal)."""
+    total = _to_num(details.get("numBathrooms"))
+    if total is None:
+        return None
+    half = _to_num(details.get("numBathroomsPlus")) or 0
+    return round(max(total - half, 0) + half / 10, 1)
+
+
+_GARAGE_WORDS = {"single": 1, "double": 2, "triple": 3, "quadruple": 4, "quad": 4}
+
+
+def _garage_from_parking(parking_type: Optional[str]) -> Optional[int]:
+    """Garage / dedicated-parking stall count from a descriptive MLS parkingType:
+      'Double Garage Detached'                  -> 2  (count + 'garage')
+      'Underground' / 'Carport' / 'Parkade'     -> 1  (covered dedicated stall; counts, esp. condos)
+      'Off Street' / 'Parking Pad' / 'Driveway' -> 0  (surface parking only — genuinely no garage)
+      'Attached Garage' (no parseable count)    -> None (has one, count unknown)
+      missing / empty                           -> None (unknown)
+    Distinguishing 0 (known: no garage) from None (unknown) is what lets the garage
+    adjustment fire for a no-garage subject instead of being skipped."""
+    if not parking_type:
+        return None
+    p = parking_type.lower()
+    m = re.search(r"(single|double|triple|quadruple|quad)\s+garage", p)
+    if m:
+        return _GARAGE_WORDS[m.group(1)]
+    if "garage" in p:
+        return None                      # has a garage, but no count we can trust
+    if "underground" in p or "parkade" in p or "carport" in p:
+        return 1                         # covered, dedicated stall (counts)
+    return 0                             # surface parking only -> no garage
+
+
+def _map_property_type(pt: Optional[str]):
+    """Map MLS propertyType text to our PropertyType. Check 'semi' before 'detach'
+    because 'Semi Detached (Half Duplex)' contains 'detached'."""
+    if not pt:
+        return None
+    p = pt.lower()
+    if "semi" in p:
+        return "semi"
+    if "row" in p or "town" in p:
+        return "townhouse"
+    if "apart" in p or "condo" in p:
+        return "condo"
+    if "detach" in p:
+        return "detached"
+    return "other"
+
 
 _PROVINCES = {"ab", "bc", "sk", "mb", "on", "qc", "ns", "nb", "nl", "pe", "nt", "yt", "nu"}
 _DIRECTIONS = {"se", "sw", "ne", "nw", "n", "s", "e", "w"}
@@ -61,13 +162,14 @@ def multisearch_item_to_record(item: dict[str, Any]) -> PropertyRecord:
     lot = item.get("lotSizeArea")
     slug = item.get("slug")
     return PropertyRecord(
-        address=_slug_to_address(slug), slug=slug, resolved_address=_slug_to_address(slug),
+        address=_slug_to_address(slug), slug=slug, property_id=item.get("id"),
+        resolved_address=_slug_to_address(slug),
         community=item.get("neighbourhoodName"),
         lat=loc.get("lat"), lng=loc.get("lon"),
         sqft=item.get("livingArea"),
         year_built=item.get("yearBuilt"),
-        beds=item.get("bedroomsTotal"),
-        baths=item.get("bathroomsTotal"),
+        beds=_coalesce_attr(item, "bedroomsTotal", "bedroomsTotalEst"),
+        baths=_coalesce_attr(item, "bathroomsTotal", "bathroomsTotalEst"),
         garage=item.get("garageSpaces"),
         lot_sf=round(lot * _SQM_TO_SQFT) if lot else None,
         hd_estimate=item.get("predictedValue"),
@@ -104,14 +206,22 @@ def listing_to_comp(row: dict[str, Any]) -> Optional[Comp]:
     street = " ".join(
         str(x) for x in (addr.get("streetNumber"), addr.get("streetName")) if x
     ) or "(address withheld)"
+    # Prefer the richer MLS `details`/`condominium` blocks (near-complete coverage);
+    # fall back to the sparse public `property` entity (+ its *Est estimates).
+    details = row.get("details") or {}
+    parking_type = (row.get("condominium") or {}).get("parkingType")
     return Comp(
         address=street, lat=loc["lat"], lng=loc["lon"],
         sold_price=float(row["soldPrice"]),
         sold_date=_parse_iso_date(row["soldDate"]),
         sqft=float(prop["livingArea"]),
-        beds=prop.get("bedroomsTotal"), baths=prop.get("bathroomsTotal"),
-        garage=prop.get("garageSpaces"),
-        year_built=prop.get("yearBuilt"), property_type="detached",
+        beds=_first(_mls_beds(details), _coalesce_attr(prop, "bedroomsTotal", "bedroomsTotalEst")),
+        baths=_first(_mls_baths(details), _coalesce_attr(prop, "bathroomsTotal", "bathroomsTotalEst")),
+        garage=_first(_to_num(details.get("numGarageSpaces")),
+                      _garage_from_parking(parking_type), prop.get("garageSpaces")),
+        parking_type=parking_type,
+        year_built=prop.get("yearBuilt"),
+        property_type=_map_property_type(details.get("propertyType")) or "detached",
     )
 
 
@@ -120,7 +230,10 @@ class HonestDoorCompSource(CompSource):
 
     VERIFIED LIVE (2026-06-07): endpoint reachable, unauthenticated, no Turnstile.
     `recent_sales` enumerates sold listings inside a bbox around the subject via
-    getListings2, joining `property` for livingArea/beds/baths/yearBuilt/location.
+    getListings2. Each Listing2 node carries the MLS `details` block (numGarageSpaces,
+    numBedrooms/Plus, numBathrooms/Plus, propertyType) and `condominium.parkingType` —
+    near-complete coverage — plus the sparser public `property` entity used as fallback.
+    Only structured attributes are extracted (no photos/agents/descriptions).
 
     `search_subject` resolves a subject from free address text via getMultiSearch —
     the same nationwide search the website uses. It is fuzzy and ranked and always
@@ -148,6 +261,31 @@ class HonestDoorCompSource(CompSource):
         props = (data.get("getMultiSearch") or {}).get("properties") or []
         return [multisearch_item_to_record(p["item"]) for p in props
                 if (p.get("item") or {}).get("slug")]
+
+    def enrich_subject(self, record: PropertyRecord) -> PropertyRecord:
+        """Fill the resolved subject's MLS attributes (garage, property type, parking,
+        and more-reliable bed/bath) from its own listing, fetched by propertyId. The
+        public `getMultiSearch` Property is sparse on these; the listing is not. No-op
+        when the subject has no propertyId or no listing on record."""
+        if not record.property_id:
+            return record
+        data = self._query(_LISTING_BY_PROPERTY_QUERY, {
+            "filter": {"propertyId": record.property_id}, "take": 1,
+            "order": {"soldDate": "desc"}})
+        rows = data.get("getListings2") or []
+        if not rows:
+            return record
+        details = rows[0].get("details") or {}
+        parking_type = (rows[0].get("condominium") or {}).get("parkingType")
+        garage = _first(_to_num(details.get("numGarageSpaces")),
+                        _garage_from_parking(parking_type), record.garage)
+        return record.model_copy(update={
+            "beds": _first(_mls_beds(details), record.beds),
+            "baths": _first(_mls_baths(details), record.baths),
+            "garage": int(garage) if garage is not None else None,
+            "parking_type": parking_type or record.parking_type,
+            "property_type": _map_property_type(details.get("propertyType")) or record.property_type,
+        })
 
     def recent_sales(self, *, lat: float, lng: float, radius_km: float,
                      lookback_months: int, as_of: date) -> list[Comp]:

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 from mcp_server.models import (
-    Subject, FindCompsResult, Estimate, CrossCheck, Criteria, AdjustmentRules,
+    Subject, FindCompsResult, Estimate, CrossCheck, Criteria, AdjustmentRules, Overrides,
 )
 from mcp_server.compsource.base import CompSource, PropertyRecord
 from mcp_server.compsource.honestdoor import HonestDoorCompSource
@@ -19,7 +19,7 @@ FETCH_RADIUS_KM = 3.0
 FETCH_LOOKBACK_MONTHS = 12
 
 _SUBJECT_FIELDS = ["community", "lat", "lng", "sqft", "year_built",
-                   "beds", "baths", "garage", "lot_sf", "property_type"]
+                   "beds", "baths", "garage", "parking_type", "lot_sf", "property_type"]
 
 
 @dataclass
@@ -36,6 +36,10 @@ class Tools:
         # attributes; the agent confirms `resolved_address` before valuing.
         candidates = self.source.search_subject(address)
         top = candidates[0] if candidates else None
+        # Enrich the chosen subject from its own MLS listing (garage, property type,
+        # parking, more-reliable bed/bath) — the search result alone is sparse on these.
+        if top is not None:
+            top = self.source.enrich_subject(top)
         rec = top or PropertyRecord(address=address)
         data = {"address": address}
         provenance: dict[str, str] = {}
@@ -79,10 +83,13 @@ class Tools:
         return find_with_ladder(subject, candidates, criteria, as_of=self.as_of)
 
     def estimate_value(self, subject: Subject, comps: list, *,
-                       rules: Optional[AdjustmentRules] = None, ladder_depth: int = 0) -> Estimate:
+                       rules: Optional[AdjustmentRules] = None,
+                       overrides: Optional[dict] = None,
+                       ladder_depth: int = 0) -> Estimate:
         self._require(subject, ["sqft"])
+        ov = Overrides(**overrides) if overrides else None
         return reconcile(subject, comps, rules or AdjustmentRules(),
-                         as_of=self.as_of, ladder_depth=ladder_depth)
+                         as_of=self.as_of, ladder_depth=ladder_depth, overrides=ov)
 
     def cross_check(self, subject: Subject, estimate_point: float) -> CrossCheck:
         rec = self.source.get_property(subject.address)
@@ -115,7 +122,8 @@ def main() -> None:
     tools = build_tools()  # live HonestDoor data + Nominatim geocoder
     mcp = FastMCP("kv-comp-analysis")
 
-    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True})
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True,
+                           "title": "Resolve subject"})
     def get_subject(address: str, overrides: Optional[dict] = None) -> dict:
         """Resolve a residential subject from an address by searching the data source.
         Auto-fills attributes from the best-match property and marks each field's
@@ -125,7 +133,8 @@ def main() -> None:
         (`match_candidates` lists other near matches). Returns attributes, not a value."""
         return tools.get_subject(address, overrides).model_dump()
 
-    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True})
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True,
+                           "title": "Find comps"})
     def find_comps(subject: dict, criteria: Optional[dict] = None) -> dict:
         """Find comparable recent sales near a subject and filter/rank by KV's house
         rules (radius, size, recency, age; ranked by similarity). Sam's hard limits
@@ -134,17 +143,24 @@ def main() -> None:
         crit = Criteria(**criteria) if criteria else Criteria()
         return tools.find_comps(Subject(**subject), crit).model_dump(by_alias=True)
 
-    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": False})
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True,
+                           "openWorldHint": False, "title": "Estimate value from comps"})
     def estimate_value(subject: dict, comps: list, rules: Optional[dict] = None,
-                       ladder_depth: int = 0) -> dict:
-        """Estimate the subject's value from comps via the adjustment grid + weighted
-        reconciliation. Pure computation, no network. Takes comps from find_comps."""
+                       overrides: Optional[dict] = None, ladder_depth: int = 0) -> dict:
+        """Estimate the subject's value from comps via market-derived adjustments
+        (paired-sales/grouping/regression) blended by median. Pure computation, no
+        network. Each adjustment reports its method, evidence and confidence; Tier-2
+        dimensions (age, location) come back as `disclosures`, not adjustments. Pass
+        `overrides` (e.g. {"garage_value": 10000}) to replace a derived coefficient.
+        Takes comps from find_comps; pass the FULL comp set, not a display subset."""
         r = AdjustmentRules(**rules) if rules else AdjustmentRules()
         from mcp_server.models import Comp
         cs = [Comp(**c) for c in comps]
-        return tools.estimate_value(Subject(**subject), cs, rules=r, ladder_depth=ladder_depth).model_dump()
+        return tools.estimate_value(Subject(**subject), cs, rules=r,
+                                    overrides=overrides, ladder_depth=ladder_depth).model_dump()
 
-    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True})
+    @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True,
+                           "title": "Cross-check estimate"})
     def cross_check(subject: dict, estimate_point: float) -> dict:
         """Sanity-check an estimate against the HonestDoor AVM and municipal assessment.
         Returns deltas and a verdict (consistent|review|divergent)."""

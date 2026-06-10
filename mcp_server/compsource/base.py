@@ -10,6 +10,7 @@ class PropertyRecord(BaseModel):
     """Raw attributes for a single property from a data source."""
     address: str
     slug: Optional[str] = None                 # source's canonical id, if any
+    property_id: Optional[str] = None          # source's property id (for listing enrichment)
     resolved_address: Optional[str] = None     # readable address the source matched
     community: Optional[str] = None
     lat: Optional[float] = None
@@ -18,7 +19,8 @@ class PropertyRecord(BaseModel):
     year_built: Optional[int] = None
     beds: Optional[float] = None
     baths: Optional[float] = None
-    garage: Optional[int] = None     # garage spaces (HonestDoor garageSpaces; often unknown)
+    garage: Optional[int] = None     # garage spaces (MLS numGarageSpaces, else parsed from parking_type)
+    parking_type: Optional[str] = None  # MLS descriptive parking, e.g. "Double Garage Detached"
     lot_sf: Optional[float] = None
     property_type: Optional[PropertyType] = None
     hd_estimate: Optional[float] = None        # AVM estimate (NOT a sale)
@@ -38,6 +40,11 @@ class CompSource(ABC):
         """Best-match record for an address (the top search hit), or an empty record."""
         recs = self.search_subject(address)
         return recs[0] if recs else PropertyRecord(address=address)
+
+    def enrich_subject(self, record: PropertyRecord) -> PropertyRecord:
+        """Optionally fill richer attributes for the chosen subject (e.g. from its own
+        listing). Default: no-op. Sources with per-property listing data override this."""
+        return record
 
     @abstractmethod
     def recent_sales(self, *, lat: float, lng: float, radius_km: float,
