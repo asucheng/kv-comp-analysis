@@ -1,5 +1,6 @@
 # mcp_server/compsource/honestdoor.py
 from __future__ import annotations
+import re
 from datetime import date, datetime
 from typing import Any, Optional
 import httpx
@@ -19,6 +20,8 @@ _LISTINGS_QUERY = (
     "getListings2(take: $take, skip: $skip, filter: $filter, order: $order){ "
     "soldPrice soldDate status type "
     "address { streetNumber streetName city neighborhood } "
+    "details { numGarageSpaces numBedrooms numBedroomsPlus numBathrooms numBathroomsPlus propertyType } "
+    "condominium { parkingType } "
     "property { livingArea bedroomsTotal bedroomsTotalEst bathroomsTotal bathroomsTotalEst "
     "garageSpaces yearBuilt location { lat lon } } } }"
 )
@@ -41,12 +44,71 @@ _SQM_TO_SQFT = 10.7639
 
 def _coalesce_attr(d: dict[str, Any], exact_key: str, est_key: str):
     """Prefer the confirmed value; fall back to HonestDoor's `*Est` estimate (what the
-    website shows) when the exact field is null. HonestDoor leaves the confirmed
-    bedroomsTotal/bathroomsTotal null on ~37% of sold records but populates the
-    estimate, so without this fallback those comps come back blank. (No `garageSpacesEst`
-    exists, so garage has no estimate and stays sparse — a genuine source limitation.)"""
+    website shows) when the exact field is null. Used as the LAST resort for bed/bath
+    behind the MLS `details` block (see listing_to_comp); the public `property` entity
+    leaves bedroomsTotal/bathroomsTotal null on ~37% of sold records but populates the
+    estimate."""
     v = d.get(exact_key)
     return v if v is not None else d.get(est_key)
+
+
+def _first(*vals):
+    """First value that isn't None (keeps a legitimate 0)."""
+    for v in vals:
+        if v is not None:
+            return v
+    return None
+
+
+def _to_num(v):
+    """Parse HonestDoor's stringly-typed numbers ('3', '1447.20') -> float, else None."""
+    try:
+        return float(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _mls_beds(details: dict[str, Any]):
+    """Total bedrooms = above-grade + below-grade (numBedrooms + numBedroomsPlus)."""
+    base = _to_num(details.get("numBedrooms"))
+    return None if base is None else base + (_to_num(details.get("numBedroomsPlus")) or 0)
+
+
+def _mls_baths(details: dict[str, Any]):
+    """HonestDoor's X.Y bath convention: X full + Y half -> full + half/10 (e.g. 3 + 1 -> 3.1)."""
+    full = _to_num(details.get("numBathrooms"))
+    return None if full is None else round(full + (_to_num(details.get("numBathroomsPlus")) or 0) / 10, 1)
+
+
+_GARAGE_WORDS = {"single": 1, "double": 2, "triple": 3, "quadruple": 4, "quad": 4}
+
+
+def _garage_from_parking(parking_type: Optional[str]) -> Optional[int]:
+    """Extract a garage stall count from a descriptive parkingType (e.g.
+    'Double Garage Detached' -> 2). Returns None when there's no '<count> garage' phrase
+    (driveway/off-street/underground parking carries no countable garage)."""
+    if not parking_type:
+        return None
+    m = re.search(r"(single|double|triple|quadruple|quad)\s+garage", parking_type.lower())
+    return _GARAGE_WORDS[m.group(1)] if m else None
+
+
+def _map_property_type(pt: Optional[str]):
+    """Map MLS propertyType text to our PropertyType. Check 'semi' before 'detach'
+    because 'Semi Detached (Half Duplex)' contains 'detached'."""
+    if not pt:
+        return None
+    p = pt.lower()
+    if "semi" in p:
+        return "semi"
+    if "row" in p or "town" in p:
+        return "townhouse"
+    if "apart" in p or "condo" in p:
+        return "condo"
+    if "detach" in p:
+        return "detached"
+    return "other"
+
 
 _PROVINCES = {"ab", "bc", "sk", "mb", "on", "qc", "ns", "nb", "nl", "pe", "nt", "yt", "nu"}
 _DIRECTIONS = {"se", "sw", "ne", "nw", "n", "s", "e", "w"}
@@ -116,15 +178,22 @@ def listing_to_comp(row: dict[str, Any]) -> Optional[Comp]:
     street = " ".join(
         str(x) for x in (addr.get("streetNumber"), addr.get("streetName")) if x
     ) or "(address withheld)"
+    # Prefer the richer MLS `details`/`condominium` blocks (near-complete coverage);
+    # fall back to the sparse public `property` entity (+ its *Est estimates).
+    details = row.get("details") or {}
+    parking_type = (row.get("condominium") or {}).get("parkingType")
     return Comp(
         address=street, lat=loc["lat"], lng=loc["lon"],
         sold_price=float(row["soldPrice"]),
         sold_date=_parse_iso_date(row["soldDate"]),
         sqft=float(prop["livingArea"]),
-        beds=_coalesce_attr(prop, "bedroomsTotal", "bedroomsTotalEst"),
-        baths=_coalesce_attr(prop, "bathroomsTotal", "bathroomsTotalEst"),
-        garage=prop.get("garageSpaces"),
-        year_built=prop.get("yearBuilt"), property_type="detached",
+        beds=_first(_mls_beds(details), _coalesce_attr(prop, "bedroomsTotal", "bedroomsTotalEst")),
+        baths=_first(_mls_baths(details), _coalesce_attr(prop, "bathroomsTotal", "bathroomsTotalEst")),
+        garage=_first(_to_num(details.get("numGarageSpaces")),
+                      _garage_from_parking(parking_type), prop.get("garageSpaces")),
+        parking_type=parking_type,
+        year_built=prop.get("yearBuilt"),
+        property_type=_map_property_type(details.get("propertyType")) or "detached",
     )
 
 
@@ -133,7 +202,10 @@ class HonestDoorCompSource(CompSource):
 
     VERIFIED LIVE (2026-06-07): endpoint reachable, unauthenticated, no Turnstile.
     `recent_sales` enumerates sold listings inside a bbox around the subject via
-    getListings2, joining `property` for livingArea/beds/baths/yearBuilt/location.
+    getListings2. Each Listing2 node carries the MLS `details` block (numGarageSpaces,
+    numBedrooms/Plus, numBathrooms/Plus, propertyType) and `condominium.parkingType` —
+    near-complete coverage — plus the sparser public `property` entity used as fallback.
+    Only structured attributes are extracted (no photos/agents/descriptions).
 
     `search_subject` resolves a subject from free address text via getMultiSearch —
     the same nationwide search the website uses. It is fuzzy and ranked and always

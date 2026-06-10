@@ -248,3 +248,59 @@ def test_multisearch_item_falls_back_to_estimated_bed_bath():
     item_exact = {**item, "bedroomsTotal": 3, "bathroomsTotal": 2.1}
     rec2 = multisearch_item_to_record(item_exact)
     assert rec2.beds == 3 and rec2.baths == 2.1
+
+
+# ---------------------------------------------------------------------------
+# MLS details / parking-type sourcing (option A): the bulk getListings2 node
+# also carries MLS `details` + `condominium.parkingType` — far better coverage
+# (garage, property type, bed/bath) than the sparse public `property` entity.
+# ---------------------------------------------------------------------------
+def _mls_row(num_garage=None, parking="Double Garage Detached", ptype="Detached",
+             beds="3", beds_plus="0", baths="3", baths_plus="1",
+             prop_garage=None, prop_bed=None, prop_bed_est=None):
+    return {"type": "SALE", "soldPrice": "700000", "soldDate": "2026-01-10T00:00:00Z",
+            "address": {"streetNumber": "1", "streetName": "Test St"},
+            "details": {"numGarageSpaces": num_garage, "numBedrooms": beds,
+                        "numBedroomsPlus": beds_plus, "numBathrooms": baths,
+                        "numBathroomsPlus": baths_plus, "propertyType": ptype},
+            "condominium": {"parkingType": parking},
+            "property": {"livingArea": 1800, "bedroomsTotal": prop_bed,
+                         "bedroomsTotalEst": prop_bed_est, "bathroomsTotal": None,
+                         "bathroomsTotalEst": None, "garageSpaces": prop_garage,
+                         "yearBuilt": 2010, "location": {"lat": 51.0, "lon": -114.0}}}
+
+
+def test_listing_to_comp_uses_mls_details():
+    c = listing_to_comp(_mls_row(num_garage="2"))
+    assert c.garage == 2                       # from details.numGarageSpaces
+    assert c.beds == 3 and c.baths == 3.1      # numBathrooms 3 + numBathroomsPlus 1 -> 3.1
+    assert c.property_type == "detached"
+    assert c.parking_type == "Double Garage Detached"
+
+
+def test_garage_falls_back_to_parking_type_word():
+    assert listing_to_comp(_mls_row(num_garage=None, parking="Single Garage")).garage == 1
+    assert listing_to_comp(_mls_row(num_garage=None, parking="Triple Garage Attached")).garage == 3
+
+
+def test_garage_none_when_no_count_and_no_garage_word():
+    c = listing_to_comp(_mls_row(num_garage=None, parking="Gravel Driveway,Off Street", prop_garage=None))
+    assert c.garage is None
+
+
+def test_property_type_mapping_variants():
+    assert listing_to_comp(_mls_row(ptype="Semi Detached (Half Duplex)")).property_type == "semi"
+    assert listing_to_comp(_mls_row(ptype="Row/Townhouse")).property_type == "townhouse"
+    assert listing_to_comp(_mls_row(ptype="Apartment")).property_type == "condo"
+    assert listing_to_comp(_mls_row(ptype="Detached")).property_type == "detached"
+
+
+def test_falls_back_to_property_when_no_mls_details():
+    row = {"type": "SALE", "soldPrice": "700000", "soldDate": "2026-01-10T00:00:00Z",
+           "address": {"streetNumber": "1", "streetName": "Test St"},
+           "property": {"livingArea": 1800, "bedroomsTotal": None, "bedroomsTotalEst": 4,
+                        "bathroomsTotal": None, "bathroomsTotalEst": 2, "garageSpaces": 3,
+                        "yearBuilt": 2010, "location": {"lat": 51.0, "lon": -114.0}}}
+    c = listing_to_comp(row)
+    assert c.beds == 4 and c.baths == 2 and c.garage == 3   # *Est + property fallback
+    assert c.parking_type is None

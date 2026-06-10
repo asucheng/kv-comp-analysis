@@ -40,7 +40,8 @@ class Comp(BaseModel):
     sqft: float
     beds: Optional[float] = None
     baths: Optional[float] = None
-    garage: Optional[int] = None     # garage spaces (HonestDoor garageSpaces; often unknown)
+    garage: Optional[int] = None     # garage spaces (MLS numGarageSpaces, else parsed from parking_type)
+    parking_type: Optional[str] = None  # MLS descriptive parking, e.g. "Double Garage Detached"
     year_built: Optional[int] = None
     property_type: Optional[PropertyType] = None
     distance_km: Optional[float] = None
