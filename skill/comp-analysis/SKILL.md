@@ -34,7 +34,9 @@ You surface judgment; you never hide it behind a number.
    6 mo → relaxes to 12, ±10 yr). Review `comps`, `relaxations`, and `flags`.
 3. **Curate** — if a comp's `$/sqft` is a clear outlier or it looks non-arm's-length, say
    so and exclude it before estimating. Prefer closer, more recent, more similar comps.
-4. **`estimate_value(subject, comps, ladder_depth)`** — pass `ladder_depth = len(relaxations)`.
+4. **`estimate_value(subject, comps, overrides?, ladder_depth)`** — pass `ladder_depth =
+   len(relaxations)` and the FULL comp set. Adjustments are derived from the comps and reported
+   with method/source/confidence; pass `overrides` to correct any coefficient.
 5. **`cross_check(subject, estimate.point)`** — compare to the HonestDoor AVM and the
    municipal assessment. Material divergence → investigate and explain; don't trust blindly.
 6. **Present the file** (format below).
@@ -53,12 +55,21 @@ You surface judgment; you never hide it behind a number.
 
 ## Output — "the file"
 
-1. **Subject** — address + key attributes, noting which were user-provided vs looked up.
-2. **Comps** — a table: address, sold price, sold date, sqft, $/sqft, distance, why included.
-3. **Adjustment grid** — per comp: raw $/sqft → time/age/size adjustments → adjusted $/sqft.
-4. **Conclusion** — point value + range + confidence, and the one-paragraph "why".
-5. **Cross-check** — vs AVM and assessment, with your read.
-6. **What I'd verify next** — what an experienced underwriter would check before signing off.
+1. **Subject** — address + key attributes, noting user-provided vs looked-up.
+2. **Comps** — table: address, sold price/date, sqft, $/sqft, distance, why included. Use the
+   FULL comp set in the math even if you only display the closest ~10.
+3. **Adjustment grid** — per comp, each line item shows: factor, $ or % value, **method**
+   (matched_pair/grouping/regression), **source** (article-method/our-judgment), and confidence.
+4. **Disclosures** — Tier-2 caveats (age/vintage skew, location clustering): the imbalance, its
+   likely direction of bias, and why it wasn't adjusted.
+5. **Conclusion** — median point value + 25–75% range + confidence, and the one-paragraph "why".
+6. **Not in this number** — condition/rehab/deferred maintenance are out of scope; suggest the
+   user mark the baseline down for them.
+7. **Cross-check** — vs AVM and assessment.
+8. **What I'd verify next.**
+
+If the underwriter disputes a derived number, re-run `estimate_value` with `overrides`
+(e.g. `{"garage_value": 10000}`) and show the revised file.
 
 ## Extending this skill (playbooks)
 

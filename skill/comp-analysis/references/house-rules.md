@@ -20,3 +20,8 @@ and flagged rather than enforced.
 **When to override:** unique/luxury/rural subjects may justify different bands or weighting.
 Prefer fixing inputs first (correct sqft/year), then overriding `criteria`/`rules`, then
 capturing a playbook if the override recurs.
+
+## Adjusted vs bracketed
+- **Adjusted** (magnitude derived from the comps): recency/time, size, beds, baths, garage.
+- **Bracketed** (filtered, not adjusted; imbalance disclosed): age (±10yr), radius/location (3km).
+  $/sqft remains the normalizer, not an adjustment.
