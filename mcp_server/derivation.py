@@ -75,7 +75,7 @@ def _matched_pair_ppsf(subject: Subject, comps: list[Comp], prices: list[float])
         for j in range(i + 1, n):
             a, b = comps[i], comps[j]
             dsqft = a.sqft - b.sqft
-            if a.sqft == 0 or abs(dsqft) / a.sqft < 0.08:
+            if a.sqft == 0 or b.sqft == 0 or abs(dsqft) / max(a.sqft, b.sqft) < 0.08:
                 continue
             if (a.beds, a.baths, a.garage) != (b.beds, b.baths, b.garage):
                 continue
@@ -137,13 +137,13 @@ def derive_feature_unit(subject: Subject, comps: list[Comp],
         dcount = hk - lk
         if dcount > 0:
             per_unit = (hr - lr) / dcount
-            if per_unit != 0:
+            if 0 < per_unit < 200_000:
                 return Derivation(round(per_unit, 2), "grouping", "article-method",
                                   f"{factor}: {hk:g}-count median ${hr:.0f} vs {lk:g}-count "
                                   f"${lr:.0f}", "medium")
 
     slope = linreg_slope([k for k, _ in known], [r for _, r in known])
-    if slope is not None and slope != 0:
+    if slope is not None and 0 < slope < 200_000:
         return Derivation(round(slope, 2), "regression", "article-method",
                           f"slope of residual~{factor} over {len(known)} comps", "low")
     return _none(f"{factor} signal too flat; not adjusted")

@@ -1,6 +1,12 @@
 from datetime import date
 from mcp_server.models import Subject, Comp
-from mcp_server.derivation import linreg_slope, derive_time_trend
+from mcp_server.derivation import (
+    linreg_slope,
+    derive_time_trend,
+    derive_marginal_ppsf,
+    derive_feature_unit,
+    compute_disclosures,
+)
 
 AS_OF = date(2026, 6, 1)
 
@@ -32,9 +38,6 @@ def test_time_trend_none_when_too_few():
     assert dv.method == "none" and dv.value == 0.0
 
 
-from mcp_server.derivation import derive_marginal_ppsf
-
-
 def _subject(sqft=1800, beds=3, baths=2, garage=2, yb=1985):
     return Subject(address="S", lat=51.05, lng=-114.08, sqft=sqft, year_built=yb,
                    beds=beds, baths=baths, garage=garage)
@@ -58,9 +61,6 @@ def test_marginal_ppsf_none_without_size_spread():
     assert dv.method == "none" and dv.value == 0.0
 
 
-from mcp_server.derivation import derive_feature_unit
-
-
 def test_feature_unit_garage_grouping():
     s = _subject(garage=2)
     # 2-car comps ~ $15k above 1-car comps (residuals already size/time-netted)
@@ -77,9 +77,6 @@ def test_feature_unit_none_without_variation():
     comps = [_comp(700_000, baths=2), _comp(705_000, baths=2)]
     dv = derive_feature_unit(s, comps, [c.sold_price for c in comps], "baths")
     assert dv.method == "none" and dv.value == 0.0
-
-
-from mcp_server.derivation import compute_disclosures
 
 
 def test_disclosure_flags_older_comp_skew():
