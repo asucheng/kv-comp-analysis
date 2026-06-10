@@ -118,3 +118,14 @@ def test_relaxation_serializes_with_from_alias():
     r = Relaxation(step="radius_km", **{"from": 3.0, "to": 5.0})
     d = r.model_dump(by_alias=True)
     assert d == {"step": "radius_km", "from": 3.0, "to": 5.0}
+
+
+def test_estimate_value_payload_and_overrides():
+    s = TOOLS.get_subject("123 Maple Dr, Calgary", overrides=SUBJECT_OVERRIDES)
+    res = TOOLS.find_comps(s)
+    est = TOOLS.estimate_value(s, res.comps, overrides={"marginal_ppsf": 60.0})
+    assert est.point > 0
+    assert est.per_comp and est.per_comp[0].adjustments
+    assert est.disclosures                              # Tier-2 caveats present
+    size = next(a for a in est.per_comp[0].adjustments if a.factor == "size")
+    assert size.source_type == "our-judgment"           # override re-tags it
