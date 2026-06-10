@@ -77,6 +77,8 @@ def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date, clamp
     marg = linreg_slope([c.sqft for c in comps], [c.sold_price for c in comps])
     marg = marg if (marg is not None and 0 < marg < 1000) else 0.0
     sqft0 = subject.sqft or (sum(c.sqft for c in comps) / n)
+    if not sqft0:
+        return _none("cannot size-normalize: subject and comp sqft unavailable")
     norm = [(c.sold_price - (c.sqft - sqft0) * marg) / sqft0 for c in comps]
 
     cut = median(months)
