@@ -167,11 +167,12 @@ def test_age_is_a_hard_limit_never_widened():
 
 def test_ladder_relaxes_garage_toggle_when_short():
     s = _subject(garage=2)
-    # qualify on every hard rule but differ on garage (known mismatch) — only a
-    # toggle relaxation can recover them
+    # match_garage is off by default; enable it here to exercise the toggle-relaxation
+    # path. The comps qualify on every hard rule but differ on garage (known mismatch) —
+    # only a toggle relaxation can recover them.
     cands = [_comp(f"c{i}", 51.051, -114.081, 800_000, date(2026, 3, 1), 2000 + i, garage=1)
              for i in range(4)]
-    res = find_with_ladder(s, cands, Criteria(min_comps=4), as_of=AS_OF)
+    res = find_with_ladder(s, cands, Criteria(min_comps=4, match_garage=True), as_of=AS_OF)
     assert len(res.comps) == 4
     assert any(r.step == "match_garage" and r.to is False for r in res.relaxations)
 

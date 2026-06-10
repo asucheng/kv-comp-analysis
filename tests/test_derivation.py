@@ -124,3 +124,25 @@ def test_time_disclosure_on_size_imbalance():
                   sqft=2100, year_built=1985, beds=3, baths=2, garage=2)]
     ds = compute_disclosures(s, comps, as_of=AS_OF)
     assert any(d.factor == "time" for d in ds)
+
+
+def test_feature_unit_matched_pair_isolates_one_unit():
+    s = _subject(garage=2)
+    # pairs alike except garage -> per-ONE-garage value (~$12k), never a 2-garage block
+    comps = [_comp(700_000, sqft=1800, garage=1), _comp(712_000, sqft=1800, garage=2),
+             _comp(705_000, sqft=1850, garage=1), _comp(718_000, sqft=1850, garage=2)]
+    residuals = [c.sold_price for c in comps]
+    dv = derive_feature_unit(s, comps, residuals, "garage")
+    assert dv.method == "matched_pair"
+    assert 7_000 <= dv.value <= 20_000
+
+
+def test_feature_unit_rejects_confounded_value():
+    s = _subject(garage=2)
+    # garage correlates with size/price and NO clean matched pair exists (sizes differ
+    # >10%) -> the confounded ~$300k/garage grouping must be rejected, not applied.
+    comps = [_comp(600_000, sqft=1700, garage=1), _comp(610_000, sqft=1700, garage=1),
+             _comp(900_000, sqft=2200, garage=2), _comp(910_000, sqft=2200, garage=2)]
+    residuals = [c.sold_price for c in comps]
+    dv = derive_feature_unit(s, comps, residuals, "garage")
+    assert dv.method == "none"

@@ -155,17 +155,63 @@ def derive_marginal_ppsf(subject: Subject, comps: list[Comp], prices: list[float
     return _none("no usable size spread; size not adjusted")
 
 
+# Plausibility ceiling for the value of ONE unit of a feature. These are sanity guards
+# (our-judgment), not adjustment values — generous enough to admit real (even luxury)
+# values, tight enough to reject a confounded derivation (e.g. a "$112k garage" that is
+# really a size/quality difference). A per-unit value above the cap falls through.
+_FEATURE_CAP = {"beds": 80_000.0, "baths": 40_000.0, "garage": 40_000.0}
+
+
+def _alike_except(a: Comp, b: Comp, factor: str) -> bool:
+    """True if two comps are comparable on everything EXCEPT `factor`: size within 10%,
+    same property type, and the OTHER count features equal. Null-safe (an unknown
+    attribute never disqualifies a pair). This isolates `factor` so the price gap
+    reflects it alone, not the size/quality that correlates with feature counts."""
+    big = max(a.sqft, b.sqft)
+    if big == 0 or abs(a.sqft - b.sqft) / big > 0.10:
+        return False
+    if a.property_type and b.property_type and a.property_type != b.property_type:
+        return False
+    for other in ("beds", "baths", "garage"):
+        if other == factor:
+            continue
+        va, vb = getattr(a, other), getattr(b, other)
+        if va is not None and vb is not None and va != vb:
+            return False
+    return True
+
+
 def derive_feature_unit(subject: Subject, comps: list[Comp],
                         residuals: list[float], factor: str) -> Derivation:
-    """$ per unit of `factor` (beds|baths|garage), on the size/time-netted residual.
-    Grouping: comps with above-median count vs at-or-below, per unit of count gap.
-    Regression fallback: slope of residual ~ count. Null-safe: only known counts used."""
+    """$ per ONE unit of `factor` (beds|baths|garage), on the size/time-netted residual.
+    Matched pair (comps alike except `factor`; per-unit = Δresidual/Δcount) -> grouping ->
+    regression. Capped by `_FEATURE_CAP` to reject confounded values. Null-safe."""
+    cap = _FEATURE_CAP.get(factor, 50_000.0)
     known = [(getattr(c, factor), r) for c, r in zip(comps, residuals)
              if getattr(c, factor) is not None]
     counts = sorted({k for k, _ in known})
     if len(known) < 2 or len(counts) < 2:
         return _none(f"no {factor} variation across comps; not adjusted")
 
+    # Rung 1: matched pairs — control for the confounds by selection, value ONE unit.
+    n = len(comps)
+    rates: list[float] = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            fa, fb = getattr(comps[i], factor), getattr(comps[j], factor)
+            if fa is None or fb is None or fa == fb or not _alike_except(comps[i], comps[j], factor):
+                continue
+            rate = (residuals[i] - residuals[j]) / (fa - fb)
+            if 0 < rate <= cap:
+                rates.append(rate)
+    if rates:
+        per_unit = median(rates)
+        conf = "high" if len(rates) >= 3 else "medium"
+        return Derivation(round(per_unit, 2), "matched_pair", "article-method",
+                          f"{factor}: {len(rates)} matched pair(s) alike except {factor}; "
+                          f"per-unit median ${per_unit:.0f}", conf)
+
+    # Rung 2: grouping (above-median vs at-or-below count). Confound-prone, so capped.
     cut = median([k for k, _ in known])
     hi = [(k, r) for k, r in known if k > cut]
     lo = [(k, r) for k, r in known if k <= cut]
@@ -175,16 +221,16 @@ def derive_feature_unit(subject: Subject, comps: list[Comp],
         dcount = hk - lk
         if dcount > 0:
             per_unit = (hr - lr) / dcount
-            if 0 < per_unit < 200_000:
+            if 0 < per_unit <= cap:
                 return Derivation(round(per_unit, 2), "grouping", "article-method",
                                   f"{factor}: {hk:g}-count median ${hr:.0f} vs {lk:g}-count "
-                                  f"${lr:.0f}", "medium")
+                                  f"${lr:.0f}", "low")
 
     slope = linreg_slope([k for k, _ in known], [r for _, r in known])
-    if slope is not None and 0 < slope < 200_000:
+    if slope is not None and 0 < slope <= cap:
         return Derivation(round(slope, 2), "regression", "article-method",
                           f"slope of residual~{factor} over {len(known)} comps", "low")
-    return _none(f"{factor} signal too flat; not adjusted")
+    return _none(f"{factor} signal too noisy/confounded to value reliably; not adjusted")
 
 
 def compute_disclosures(subject: Subject, comps: list[Comp], *, as_of: date) -> list[Disclosure]:

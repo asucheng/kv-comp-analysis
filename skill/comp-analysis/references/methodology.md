@@ -31,7 +31,11 @@ transactional (flag-only) → time → size → beds → baths → garage → lo
   in size, a `time` disclosure flags the residual risk.
 - **Size (GLA):** `(comp.sqft − subject.sqft) × marginal $/sqft`, marginal rate = Δprice/Δsqft from
   the comps. Marginal $/sqft is below average $/sqft — land + fixed value already counted.
-- **Beds/Baths/Garage:** per-unit $ from grouping on the size/time-netted residual; null-safe.
+- **Beds/Baths/Garage:** value of ONE unit, then × (subject − comp) count. Derived
+  matched-pair-first (comps alike in size/other-features/type, differing only in this
+  feature → clean isolation) → grouping → regression; capped to reject confounded values;
+  null-safe. **Selection uses only Sam's 5** (match toggles default off) — these features
+  are *adjusted*, not filtered, so the comp set keeps the variation the engine needs.
 - **Age:** *not adjusted.* Controlled by the ±10yr filter. Buyers price *effective* age (condition),
   which we lack data for → deferred to the rehab markdown (out of scope). `our-judgment`.
 - **Location:** *not adjusted.* Controlled by the 3km filter; no per-community data. Qualitative.

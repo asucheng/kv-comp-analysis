@@ -59,15 +59,16 @@ class Criteria(BaseModel):
     size_pct: float = 0.20
     lookback_months: int = 6
     age_years: int = 10
-    # Secondary exact-match constraints. beds/baths/garage are strict-by-default and
-    # null-safe (a missing value never drops a comp); the ladder relaxes them when too
-    # few comps qualify. match_type stays off: subject property_type is frequently
-    # unknown and the type filter is not null-safe, so defaulting it on would wrongly
-    # drop every comp.
+    # Secondary exact-match constraints — all OFF by default. Comp SELECTION uses only
+    # Sam's 5 (radius/size/recency/age/$-per-sqft); bed/bath/garage differences are
+    # handled by the adjustment engine in estimate_value (matched-pair -> grouping ->
+    # regression), NOT by filtering — and matching them out would strip the variation
+    # the engine needs to derive their value. Toggles remain available to switch on
+    # per-case (null-safe for beds/baths/garage); the ladder can relax them if enabled.
     match_type: bool = False
-    match_beds: bool = True
-    match_baths: bool = True
-    match_garage: bool = True
+    match_beds: bool = False
+    match_baths: bool = False
+    match_garage: bool = False
     min_comps: int = 4
 
 
