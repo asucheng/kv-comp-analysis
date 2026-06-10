@@ -7,6 +7,7 @@ PropertyType = Literal["detached", "semi", "townhouse", "condo", "other"]
 Confidence = Literal["high", "medium", "low"]
 AdjMethod = Literal["matched_pair", "grouping", "regression", "cost_convention", "none"]
 SourceType = Literal["article-method", "our-judgment"]
+Direction = Literal["understate", "overstate", "unknown"]
 
 
 class Subject(BaseModel):
@@ -114,7 +115,7 @@ class Disclosure(BaseModel):
     """A Tier-2 (filtered-not-adjusted) caveat: imbalance + likely direction of bias."""
     factor: str                       # "age" | "location" | "transactional"
     skew: str
-    direction: str                    # "understate" | "overstate" | "unknown"
+    direction: Direction
     caveat: str
     source_type: SourceType = "our-judgment"
 
