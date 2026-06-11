@@ -163,6 +163,9 @@ class Estimate(BaseModel):
     disclosures: list[Disclosure] = Field(default_factory=list)
     method_notes: list[str] = Field(default_factory=list)
     coefficients: list[CoefficientTrace] = Field(default_factory=list)
+    # Server-issued handle for this result. render_report takes this id instead of the
+    # whole estimate, so the model never re-emits the (large) object back through itself.
+    estimate_id: Optional[str] = None
 
 
 class CrossCheck(BaseModel):

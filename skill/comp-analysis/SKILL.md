@@ -36,12 +36,15 @@ You surface judgment; you never hide it behind a number.
    so and exclude it before estimating. Prefer closer, more recent, more similar comps.
 4. **`estimate_value(subject, comps, overrides?, ladder_depth)`** — pass `ladder_depth =
    len(relaxations)` and the FULL comp set. Adjustments are derived from the comps and reported
-   with method/source/confidence; pass `overrides` to correct any coefficient.
+   with method/source/confidence; pass `overrides` to correct any coefficient. It returns an
+   **`estimate_id`** — keep it; that's what render_report needs.
 5. **Present the file** (format below).
-6. **`render_report(payload)`** — as the FINAL step, once the value is settled (address
-   confirmed, any `overrides` applied). Assemble `payload` from the estimate plus your
-   narrative, then surface the returned path and a `file://` link so the user can open the
-   interactive report in a browser. Re-running after an override overwrites the same file.
+6. **`render_report(estimate_id, confidence_reasoning?, target_warnings?, verify_next?, exclusions?)`**
+   — the FINAL step, once the value is settled (address confirmed, any `overrides` applied).
+   Pass the **`estimate_id`** from `estimate_value` plus your short narrative — the server still
+   holds the subject, comps and estimate, so **do NOT re-send them**. Then surface the returned
+   path and a `file://` link. Re-running after an override (call `estimate_value` again for a
+   fresh id) overwrites the same file.
 
 ## Judgment rules
 
@@ -79,17 +82,17 @@ If the underwriter disputes a derived number, re-run `estimate_value` with `over
 
 ## The HTML report (`render_report`)
 
-Build `payload` and call `render_report`:
-- `subject` — the confirmed subject object.
-- `comps` — a list of `{comp, kept, exclude_reason}`: every comp you considered, with
-  `kept: false` + a reason for the ones you curated out (so the report shows them).
-- `estimate` — the object returned by `estimate_value` verbatim (it carries `coefficients`
-  with the per-factor derivation traces the report renders into expandable tiles).
+Call `render_report` with the **`estimate_id`** and your narrative only — the server kept the
+subject, comps and estimate from `estimate_value`, so you never re-send them (re-emitting the
+estimate is large enough to blow the response limit — pass the id instead):
+- `estimate_id` — the id returned by `estimate_value`.
 - `confidence_reasoning` — your one-paragraph "why" for the confidence.
 - `target_warnings` — subject-specific cautions (e.g. "subject's own recent sale is in the
   pool", "semi subject vs. detached comps"). These render FIRST, above the standard
   project-level disclaimers (which the renderer adds automatically — do not repeat them).
 - `verify_next` — your "what I'd verify next" bullets.
+- `exclusions` *(optional)* — a list of `{"address", "reason"}` for comps you want curated
+  out of the report; everything else is kept. Name only the comps to drop, not the full set.
 
 Then post the returned path to the user, e.g.:
 `✅ Interactive report: /abs/path/138-cranberry-place-se-2026-06-10.html`
