@@ -27,14 +27,14 @@ def test_time_trend_grouping_detects_rising_market():
               _comp(840_000, d=date(2026, 5, 1))]
     older = [_comp(800_000, d=date(2025, 12, 1)), _comp(820_000, d=date(2026, 1, 1)),
              _comp(810_000, d=date(2026, 2, 1))]
-    dv = derive_time_trend(_subject(sqft=2000), recent + older, as_of=AS_OF, clamp=0.02)
+    dv = derive_time_trend(_subject(sqft=2000), recent + older, as_of=AS_OF)
     assert dv.method in ("matched_pair", "grouping", "regression")
     assert dv.value > 0
     assert -0.02 <= dv.value <= 0.02
 
 
 def test_time_trend_none_when_too_few():
-    dv = derive_time_trend(_subject(), [_comp(800_000)], as_of=AS_OF, clamp=0.02)
+    dv = derive_time_trend(_subject(), [_comp(800_000)], as_of=AS_OF)
     assert dv.method == "none" and dv.value == 0.0
 
 
@@ -107,7 +107,7 @@ def test_time_trend_not_fooled_by_recent_larger_comps():
                    sqft=2000, year_built=1985, beds=3, baths=2, garage=2),
               Comp(address="r2", lat=51.05, lng=-114.08, sold_price=735_000, sold_date=date(2026,6,1),
                    sqft=2010, year_built=1985, beds=3, baths=2, garage=2)]
-    dv = derive_time_trend(s, older + recent, as_of=AS_OF, clamp=0.02)
+    dv = derive_time_trend(s, older + recent, as_of=AS_OF)
     assert dv.value > -0.02   # not pinned at the negative clamp rail
     assert abs(dv.value) < 0.015   # close to flat, not a fake double-digit decline
 
@@ -153,7 +153,7 @@ def test_time_trend_emits_pair_traces():
               _comp(862_000, d=date(2026, 5, 1), addr="r2")]
     older = [_comp(800_000, d=date(2025, 12, 1), addr="o1"),
              _comp(804_000, d=date(2026, 1, 1), addr="o2")]
-    dv = derive_time_trend(_subject(sqft=2000), recent + older, as_of=AS_OF, clamp=0.02)
+    dv = derive_time_trend(_subject(sqft=2000), recent + older, as_of=AS_OF)
     assert dv.method == "matched_pair"
     assert len(dv.pairs) >= 1
     assert dv.pairs[0].comp_a and dv.pairs[0].comp_b
@@ -171,7 +171,7 @@ def test_time_trend_pairs_must_be_feature_identical():
         _comp(900_000, sqft=2000, d=date(2026, 5, 1),  beds=4, baths=3, garage=2, addr="c4_new"),
         _comp(840_000, sqft=2000, d=date(2025, 12, 1), beds=4, baths=3, garage=2, addr="d4_old"),
     ]
-    dv = derive_time_trend(s, comps, as_of=AS_OF, clamp=0.02)
+    dv = derive_time_trend(s, comps, as_of=AS_OF)
     assert dv.method == "matched_pair"
     by_addr = {c.address: c for c in comps}
     feats = lambda c: (c.beds, c.baths, c.garage, c.property_type)
@@ -179,6 +179,57 @@ def test_time_trend_pairs_must_be_feature_identical():
         assert feats(by_addr[p.comp_a]) == feats(by_addr[p.comp_b]), \
             f"time pair mixes features: {p.comp_a} vs {p.comp_b}"
     assert len(dv.pairs) >= 2          # still finds the legit 3-bed and 4-bed twin pairs
+
+
+def test_time_trend_not_clamped_in_hot_market():
+    # A genuinely hot market (>2%/mo) must come through, not be pinned at an artificial rail.
+    # Identical homes 6 mo apart, $400 -> $500/sqft = +25% over 6 mo ≈ +4.2%/mo.
+    s = _subject(sqft=2000)
+    comps = [
+        _comp(800_000, sqft=2000, d=date(2025, 12, 1), beds=3, baths=2, garage=2, addr="o1"),
+        _comp(802_000, sqft=2000, d=date(2025, 12, 1), beds=3, baths=2, garage=2, addr="o2"),
+        _comp(1_000_000, sqft=2000, d=date(2026, 6, 1), beds=3, baths=2, garage=2, addr="r1"),
+        _comp(1_004_000, sqft=2000, d=date(2026, 6, 1), beds=3, baths=2, garage=2, addr="r2"),
+    ]
+    dv = derive_time_trend(s, comps, as_of=AS_OF)      # no clamp argument anymore
+    assert dv.method == "matched_pair"
+    assert dv.value > 0.02                              # would have been pinned at 0.02 before
+
+
+def test_size_pair_uses_small_size_gaps():
+    # No 8% floor: feature-identical comps only ~4% apart in size still form a size pair
+    # (previously dropped, forcing a fall to grouping).
+    s = _subject(sqft=1500)
+    comps = [_comp(p, sqft=sq, beds=3, baths=2, garage=2, addr=a) for a, p, sq in [
+        ("a", 500_000, 1500), ("b", 512_000, 1560), ("c", 503_000, 1510), ("d", 509_000, 1545)]]
+    dv = derive_marginal_ppsf(s, comps, [c.sold_price for c in comps])
+    assert dv.method == "matched_pair"
+    assert dv.value > 0
+
+
+def test_size_pair_keeps_negative_slopes_two_sided():
+    # Two-sided: a pair where the bigger home sold for less (negative slope) is KEPT, so the
+    # median reflects all the evidence rather than only the positive pairs.
+    s = _subject(sqft=1500)
+    comps = [_comp(p, sqft=sq, beds=3, baths=2, garage=2, addr=a) for a, p, sq in [
+        ("a", 500_000, 1500), ("b", 540_000, 1700), ("c", 560_000, 1900), ("d", 555_000, 2000)]]
+    dv = derive_marginal_ppsf(s, comps, [c.sold_price for c in comps])
+    assert dv.method == "matched_pair"
+    assert dv.value > 0
+    assert any(p.value < 0 for p in dv.pairs)          # a negative pair survived into the set
+
+
+def test_feature_unit_keeps_negative_pair_two_sided():
+    # Features mirror size: per-pair cap removed (negatives kept); the sanity cap applies to
+    # the FINAL median, not each pair.
+    s = _subject(beds=3, baths=2, garage=2)
+    comps = [_comp(0, sqft=1500, beds=3, baths=2, garage=g, addr=a)
+             for a, g in [("g1", 1), ("g2", 2), ("g3", 3)]]
+    residuals = [100_000, 115_000, 110_000]            # g2->g3 implies a negative per-garage value
+    dv = derive_feature_unit(s, comps, residuals, "garage")
+    assert dv.method == "matched_pair"
+    assert any(p.value < 0 for p in dv.pairs)          # negative pair kept (two-sided)
+    assert dv.value > 0                                # final median positive & within cap
 
 
 def test_marginal_ppsf_uses_median_of_all_pairs_with_traces():

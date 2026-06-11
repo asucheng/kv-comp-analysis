@@ -88,7 +88,6 @@ class FindCompsResult(BaseModel):
 
 class AdjustmentRules(BaseModel):
     """Config only — no adjustment magnitudes (those are derived from the comps)."""
-    trend_clamp: float = 0.02     # max |monthly time trend|
     min_comps: int = 4
     outlier_iqr: float = 1.5      # IQR multiplier if drop_outliers is on
     drop_outliers: bool = False   # median blend tolerates outliers; off by default

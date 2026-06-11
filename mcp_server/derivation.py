@@ -38,11 +38,13 @@ def linreg_slope(xs: list[float], ys: list[float]) -> Optional[float]:
     return sum((x - mx) * (y - my) for x, y in zip(xs, ys)) / denom
 
 
-def _clamp(v: float, c: float) -> float:
-    return max(-c, min(c, v))
+# $/sqft magnitude bound for a SINGLE size pair. Two-sided (|rate| < cap) so it removes only
+# the meaningless near-zero-Δsqft explosions (price-noise ÷ a tiny denominator) symmetrically —
+# it does NOT drop legitimate negative-slope noise, which must stay so the median is unbiased.
+_PPSF_CLAMP = 1000.0
 
 
-def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date, clamp: float) -> Derivation:
+def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date) -> Derivation:
     """Market %/month, measured on SIZE-CONTROLLED data so a size-imbalanced comp set
     can't masquerade as a price trend.
     Rung 1: size-matched pairs across time (size held constant by selection).
@@ -84,11 +86,13 @@ def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date, clamp
                 detail=f"${rp:.0f}/sqft ({rm:.0f} mo) vs ${op:.0f}/sqft ({om:.0f} mo), {om-rm:.0f} mo apart",
                 value=round(rate, 5)))
     if rates:
-        raw = median(rates)
-        per_month = _clamp(raw, clamp)
-        conf = "low" if per_month != raw else ("high" if len(rates) >= 2 else "medium")
+        # No clamp: the median of feature-matched pairs IS the market rate — clamping it would
+        # hide a genuinely hot (or cold) market. Thin/noisy data is surfaced via confidence,
+        # not by capping the number.
+        per_month = median(rates)
+        conf = "high" if len(rates) >= 2 else "medium"
         return Derivation(round(per_month, 5), "matched_pair", "article-method",
-                          f"{len(rates)} size-matched pair(s) across time", conf, pairs=pairs)
+                          f"{len(rates)} feature-matched pair(s) across time", conf, pairs=pairs)
 
     # Rungs 2-3: size-normalize each price to the subject's size, then group / regress.
     marg = linreg_slope([c.sqft for c in comps], [c.sold_price for c in comps])
@@ -106,9 +110,8 @@ def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date, clamp
         om, op = median([m for m, _ in older]), median([p for _, p in older])
         gap = om - rm
         if gap > 0 and op > 0:
-            raw = ((rp - op) / op) / gap
-            per_month = _clamp(raw, clamp)
-            conf = "low" if per_month != raw else "medium"
+            per_month = ((rp - op) / op) / gap
+            conf = "medium"
             ev = (f"size-normalized: recent ${rp:.0f}/sqft (~{rm:.0f} mo) vs older "
                   f"${op:.0f}/sqft (~{om:.0f} mo) over {gap:.0f} mo")
             return Derivation(round(per_month, 5), "grouping", "article-method", ev, conf,
@@ -120,16 +123,18 @@ def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date, clamp
     if slope is None:
         return _none("no time variation across comps")
     my = mean(norm)
-    raw = slope / my if my else 0.0
-    per_month = _clamp(raw, clamp)
+    per_month = slope / my if my else 0.0
     return Derivation(round(per_month, 5), "regression", "article-method",
                       f"least-squares on size-normalized $/sqft ({n} comps, small-N)", "low",
                       regression={"n": n, "slope_per_mo": round(per_month, 5)})
 
 
 def _matched_pair_ppsf(subject: Subject, comps: list[Comp], prices: list[float]) -> Optional[Derivation]:
-    """Comps alike except sqft (>=8% apart, same beds/baths/garage) -> Δprice/Δsqft.
-    Collects EVERY qualifying pair and uses their median (uniform with time/features)."""
+    """Comps identical in features (beds/baths/garage/type) but different in sqft -> Δprice/Δsqft,
+    median over EVERY such pair. No minimum size gap (that injected a concavity bias); the only
+    per-pair guard is the two-sided |rate| < cap, which drops near-zero-Δsqft explosions on BOTH
+    signs without trimming the legitimate negative noise that keeps the median unbiased.
+    Positivity is asserted on the FINAL median, not per pair."""
     n = len(comps)
     rates: list[float] = []
     pairs: list[PairTrace] = []
@@ -137,12 +142,12 @@ def _matched_pair_ppsf(subject: Subject, comps: list[Comp], prices: list[float])
         for j in range(i + 1, n):
             a, b = comps[i], comps[j]
             dsqft = a.sqft - b.sqft
-            if a.sqft == 0 or b.sqft == 0 or abs(dsqft) / max(a.sqft, b.sqft) < 0.08:
+            if dsqft == 0:                 # no size signal / divide-by-zero
                 continue
-            if (a.beds, a.baths, a.garage) != (b.beds, b.baths, b.garage):
+            if (a.beds, a.baths, a.garage, a.property_type) != (b.beds, b.baths, b.garage, b.property_type):
                 continue
             rate = (prices[i] - prices[j]) / dsqft
-            if 0 < rate < 1000:
+            if abs(rate) < _PPSF_CLAMP:    # two-sided: drop only the meaningless explosions
                 rates.append(rate)
                 pairs.append(PairTrace(
                     comp_a=a.address, comp_b=b.address,
@@ -150,10 +155,11 @@ def _matched_pair_ppsf(subject: Subject, comps: list[Comp], prices: list[float])
                     value=round(rate, 2)))
     if rates:
         rate = median(rates)
-        conf = "high" if len(rates) >= 2 else "medium"
-        return Derivation(round(rate, 2), "matched_pair", "article-method",
-                          f"{len(rates)} matched pair(s); per-sqft median ${rate:.0f}",
-                          conf, pairs=pairs)
+        if 0 < rate < _PPSF_CLAMP:         # size adds positive value — checked on the AGGREGATE
+            conf = "high" if len(rates) >= 2 else "medium"
+            return Derivation(round(rate, 2), "matched_pair", "article-method",
+                              f"{len(rates)} matched pair(s); per-sqft median ${rate:.0f}",
+                              conf, pairs=pairs)
     return None
 
 
@@ -238,19 +244,21 @@ def derive_feature_unit(subject: Subject, comps: list[Comp],
             fa, fb = getattr(comps[i], factor), getattr(comps[j], factor)
             if fa is None or fb is None or fa == fb or not _alike_except(comps[i], comps[j], factor):
                 continue
+            # Δcount is an integer ≥1, so there is no near-zero-denominator explosion here:
+            # keep every pair (both signs) and let the sanity cap apply to the FINAL median.
             rate = (residuals[i] - residuals[j]) / (fa - fb)
-            if 0 < rate <= cap:
-                rates.append(rate)
-                pairs.append(PairTrace(
-                    comp_a=comps[i].address, comp_b=comps[j].address,
-                    detail=f"Δresidual ${abs(residuals[i]-residuals[j]):,.0f} over {abs(fa-fb):g} {factor}",
-                    value=round(rate, 2)))
+            rates.append(rate)
+            pairs.append(PairTrace(
+                comp_a=comps[i].address, comp_b=comps[j].address,
+                detail=f"Δresidual ${abs(residuals[i]-residuals[j]):,.0f} over {abs(fa-fb):g} {factor}",
+                value=round(rate, 2)))
     if rates:
         per_unit = median(rates)
-        conf = "high" if len(rates) >= 3 else "medium"
-        return Derivation(round(per_unit, 2), "matched_pair", "article-method",
-                          f"{factor}: {len(rates)} matched pair(s) alike except {factor}; "
-                          f"per-unit median ${per_unit:.0f}", conf, pairs=pairs)
+        if 0 < per_unit <= cap:            # positive & plausible — asserted on the AGGREGATE
+            conf = "high" if len(rates) >= 3 else "medium"
+            return Derivation(round(per_unit, 2), "matched_pair", "article-method",
+                              f"{factor}: {len(rates)} matched pair(s) alike except {factor}; "
+                              f"per-unit median ${per_unit:.0f}", conf, pairs=pairs)
 
     # Rung 2: grouping (above-median vs at-or-below count). Confound-prone, so capped.
     cut = median([k for k, _ in known])
