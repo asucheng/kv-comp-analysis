@@ -226,6 +226,7 @@ def derive_feature_unit(subject: Subject, comps: list[Comp],
     # Rung 1: matched pairs — control for the confounds by selection, value ONE unit.
     n = len(comps)
     rates: list[float] = []
+    pairs: list[PairTrace] = []
     for i in range(n):
         for j in range(i + 1, n):
             fa, fb = getattr(comps[i], factor), getattr(comps[j], factor)
@@ -234,12 +235,16 @@ def derive_feature_unit(subject: Subject, comps: list[Comp],
             rate = (residuals[i] - residuals[j]) / (fa - fb)
             if 0 < rate <= cap:
                 rates.append(rate)
+                pairs.append(PairTrace(
+                    comp_a=comps[i].address, comp_b=comps[j].address,
+                    detail=f"Δresidual ${residuals[i]-residuals[j]:,.0f} over {fa-fb:+g} {factor}",
+                    value=round(rate, 2)))
     if rates:
         per_unit = median(rates)
         conf = "high" if len(rates) >= 3 else "medium"
         return Derivation(round(per_unit, 2), "matched_pair", "article-method",
                           f"{factor}: {len(rates)} matched pair(s) alike except {factor}; "
-                          f"per-unit median ${per_unit:.0f}", conf)
+                          f"per-unit median ${per_unit:.0f}", conf, pairs=pairs)
 
     # Rung 2: grouping (above-median vs at-or-below count). Confound-prone, so capped.
     cut = median([k for k, _ in known])
@@ -254,12 +259,16 @@ def derive_feature_unit(subject: Subject, comps: list[Comp],
             if 0 < per_unit <= cap:
                 return Derivation(round(per_unit, 2), "grouping", "article-method",
                                   f"{factor}: {hk:g}-count median ${hr:.0f} vs {lk:g}-count "
-                                  f"${lr:.0f}", "low")
+                                  f"${lr:.0f}", "low",
+                                  groups={"hi_count": hk, "hi_resid": round(hr),
+                                          "lo_count": lk, "lo_resid": round(lr),
+                                          "per_unit": round(per_unit, 2)})
 
     slope = linreg_slope([k for k, _ in known], [r for _, r in known])
     if slope is not None and 0 < slope <= cap:
         return Derivation(round(slope, 2), "regression", "article-method",
-                          f"slope of residual~{factor} over {len(known)} comps", "low")
+                          f"slope of residual~{factor} over {len(known)} comps", "low",
+                          regression={"n": len(known), "slope": round(slope, 2)})
     return _none(f"{factor} signal too noisy/confounded to value reliably; not adjusted")
 
 

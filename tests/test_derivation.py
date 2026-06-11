@@ -172,3 +172,16 @@ def test_marginal_ppsf_uses_median_of_all_pairs_with_traces():
     from statistics import median
     # fixture uses integer-divisor sqft gaps, so median-of-rounded == round-of-median here
     assert dv.value == round(median([p.value for p in dv.pairs]), 2)
+
+
+def test_feature_unit_emits_pair_traces():
+    s = _subject(garage=2)
+    comps = [_comp(700_000, sqft=1800, garage=1, addr="a"),
+             _comp(712_000, sqft=1800, garage=2, addr="b"),
+             _comp(705_000, sqft=1850, garage=1, addr="c"),
+             _comp(718_000, sqft=1850, garage=2, addr="d")]
+    residuals = [c.sold_price for c in comps]
+    dv = derive_feature_unit(s, comps, residuals, "garage")
+    assert dv.method == "matched_pair"
+    assert len(dv.pairs) >= 1
+    assert "garage" in dv.pairs[0].detail
