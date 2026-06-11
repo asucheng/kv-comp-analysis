@@ -90,6 +90,6 @@ def test_estimate_exposes_coefficient_traces():
     factors = [c.factor for c in est.coefficients]
     assert factors == ["time", "size", "beds", "baths", "garage"]
     size = next(c for c in est.coefficients if c.factor == "size")
-    assert size.is_pct is False and size.value == size.value  # present, numeric
+    assert size.is_pct is False and size.value > 0  # positive $/sqft derived
     time = next(c for c in est.coefficients if c.factor == "time")
     assert time.is_pct is True
