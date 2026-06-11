@@ -54,7 +54,7 @@ def test_render_is_self_contained_no_external_refs():
 def test_render_shows_pair_traces_in_tiles():
     html = render_report_html(_payload())
     assert "Δ" in html  # arithmetic detail rendered
-    assert "median of" in html  # aggregate line rendered
+    assert "larger half" in html  # aggregate line rendered (grouping evidence present)
 
 
 def test_render_excluded_reason_present():

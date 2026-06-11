@@ -50,15 +50,32 @@ def _adj(factor, method, source, *, pct=None, dollar=None, evidence, conf) -> Ad
 def _coeff(factor: str, dv: Derivation, *, is_pct: bool, unit: Optional[str] = None) -> CoefficientTrace:
     n = len(dv.pairs)
     if is_pct:
-        equation = ("monthly % = median of ((p_recent − p_older)/p_older) / Δmonths "
-                    "over size-matched pairs")
         aggregate = f"median of {n} size-matched pair(s) = {dv.value*100:+.3f}%/mo" if n else dv.evidence
     elif unit:
-        equation = f"per-{unit} $ = median of Δresidual / Δcount over pairs alike except {factor}"
         aggregate = f"median of {n} matched pair(s) = ${dv.value:,.0f}/{unit}" if n else dv.evidence
     else:
-        equation = "per-sqft $ = median of Δprice / Δsqft over matched pairs"
         aggregate = f"median of {n} matched pair(s) = ${dv.value:,.0f}/sqft" if n else dv.evidence
+
+    if dv.method == "matched_pair":
+        if is_pct:
+            equation = "monthly % = median over size-matched pairs of ((p_recent − p_older)/p_older) / Δmonths"
+        elif unit:
+            equation = f"per-{unit} $ = median over pairs alike except {factor} of Δresidual / Δcount"
+        else:
+            equation = "per-sqft $ = median over matched pairs of Δprice / Δsqft"
+    elif dv.method == "grouping":
+        if is_pct:
+            equation = "monthly % = (recent − older median $/sqft) / Δmonths, size-normalized"
+        elif unit:
+            equation = f"per-{unit} $ = (higher-count − lower-count median residual) / Δcount"
+        else:
+            equation = "per-sqft $ = (larger-half − smaller-half median price) / Δsqft"
+    elif dv.method == "regression":
+        kind = "%/mo" if is_pct else (f"$/{unit}" if unit else "$/sqft")
+        equation = f"least-squares slope ({kind}) across the comp set"
+    else:  # none — not adjusted
+        equation = "no usable signal in this comp set; not adjusted"
+
     return CoefficientTrace(
         factor=factor, method=dv.method, source_type=dv.source_type, value=dv.value,
         is_pct=is_pct, confidence=dv.confidence, equation=equation, pairs=dv.pairs,

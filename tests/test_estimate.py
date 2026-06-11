@@ -93,3 +93,22 @@ def test_estimate_exposes_coefficient_traces():
     assert size.is_pct is False and size.value > 0  # positive $/sqft derived
     time = next(c for c in est.coefficients if c.factor == "time")
     assert time.is_pct is True
+
+
+def test_coefficient_equation_adapts_to_grouping_method():
+    from datetime import date
+    from mcp_server.models import Subject, Comp, AdjustmentRules
+    from mcp_server.estimate import reconcile
+    s = Subject(address="S", lat=51.05, lng=-114.08, sqft=2000, year_built=1985,
+                beds=3, baths=2, garage=2)
+    # size spread present, but beds differ across the size gap -> no size matched pair
+    # -> derive_marginal_ppsf falls to the grouping rung
+    comps = [Comp(address=a, lat=51.05, lng=-114.08, sold_price=p, sold_date=date(2026, 5, 1),
+                  sqft=sq, year_built=1985, beds=b, baths=2, garage=2)
+             for a, p, sq, b in [("a", 680_000, 1800, 3), ("b", 690_000, 1810, 3),
+                                 ("c", 760_000, 2200, 4), ("d", 770_000, 2210, 4)]]
+    est = reconcile(s, comps, AdjustmentRules(), as_of=date(2026, 6, 1))
+    size = next(c for c in est.coefficients if c.factor == "size")
+    assert size.method == "grouping"
+    assert size.groups is not None and not size.pairs
+    assert "half" in size.equation  # equation reflects grouping, not matched-pair
