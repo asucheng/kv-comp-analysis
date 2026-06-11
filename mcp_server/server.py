@@ -1,5 +1,6 @@
 from __future__ import annotations
 import os
+import tempfile
 from dataclasses import dataclass
 from datetime import date
 from typing import Optional
@@ -109,14 +110,36 @@ class Tools:
                           vs_avm_pct=vs_avm, vs_assessment_pct=vs_assess,
                           verdict=verdict, notes=notes)
 
-    def render_report(self, payload: ReportPayload, out_dir: str = "reports") -> str:
-        """Write the self-contained HTML report to disk; return its absolute path."""
-        os.makedirs(out_dir, exist_ok=True)
+    def render_report(self, payload: ReportPayload, out_dir: Optional[str] = None) -> str:
+        """Write the self-contained HTML report to disk; return its absolute path.
+
+        The default output dir is ABSOLUTE ($KV_COMP_REPORTS_DIR, else ~/kv-comp-reports),
+        never CWD-relative — Claude Desktop launches the stdio server from a non-writable
+        working directory, so a relative "reports/" would fail with PermissionError. Falls
+        back to the system temp dir if the primary location can't be written.
+        """
         name = slug(payload.subject.resolved_address or payload.subject.address)[:80].rstrip("-")
-        path = os.path.abspath(os.path.join(out_dir, f"{name}-{payload.as_of}.html"))
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(render_report_html(payload))
-        return path
+        fname = f"{name}-{payload.as_of}.html"
+        content = render_report_html(payload)
+        candidates = ([out_dir] if out_dir is not None
+                      else [_reports_dir(), os.path.join(tempfile.gettempdir(), "kv-comp-reports")])
+        last_err: Optional[OSError] = None
+        for d in candidates:
+            try:
+                os.makedirs(d, exist_ok=True)
+                path = os.path.abspath(os.path.join(d, fname))
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                return path
+            except OSError as e:
+                last_err = e
+        raise last_err  # type: ignore[misc]  # candidates is non-empty, so last_err is set
+
+
+def _reports_dir() -> str:
+    """Absolute, writable default dir for generated reports — independent of the server's
+    CWD (Claude Desktop launches stdio servers from a non-writable directory)."""
+    return os.path.expanduser(os.environ.get("KV_COMP_REPORTS_DIR") or "~/kv-comp-reports")
 
 
 def build_tools(source: Optional[CompSource] = None, geocoder: Optional[Geocoder] = None,
