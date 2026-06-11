@@ -112,7 +112,7 @@ class Tools:
     def render_report(self, payload: ReportPayload, out_dir: str = "reports") -> str:
         """Write the self-contained HTML report to disk; return its absolute path."""
         os.makedirs(out_dir, exist_ok=True)
-        name = slug(payload.subject.resolved_address or payload.subject.address)
+        name = slug(payload.subject.resolved_address or payload.subject.address)[:80].rstrip("-")
         path = os.path.abspath(os.path.join(out_dir, f"{name}-{payload.as_of}.html"))
         with open(path, "w", encoding="utf-8") as f:
             f.write(render_report_html(payload))
