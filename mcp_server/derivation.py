@@ -140,7 +140,7 @@ def _matched_pair_ppsf(subject: Subject, comps: list[Comp], prices: list[float])
                 rates.append(rate)
                 pairs.append(PairTrace(
                     comp_a=a.address, comp_b=b.address,
-                    detail=f"Δ${prices[i]-prices[j]:,.0f} over {dsqft:+.0f} sqft",
+                    detail=f"Δ${abs(prices[i]-prices[j]):,.0f} over {abs(dsqft):,.0f} sqft",
                     value=round(rate, 2)))
     if rates:
         rate = median(rates)

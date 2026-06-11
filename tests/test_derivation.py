@@ -170,4 +170,5 @@ def test_marginal_ppsf_uses_median_of_all_pairs_with_traces():
     assert dv.method == "matched_pair"
     assert len(dv.pairs) >= 3          # all qualifying pairs recorded, not just the first
     from statistics import median
+    # fixture uses integer-divisor sqft gaps, so median-of-rounded == round-of-median here
     assert dv.value == round(median([p.value for p in dv.pairs]), 2)
