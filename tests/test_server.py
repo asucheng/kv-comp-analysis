@@ -153,3 +153,47 @@ def test_render_report_writes_file(tmp_path):
     assert os.path.isabs(path) and os.path.exists(path)
     assert path.endswith("138-cranberry-place-se-2026-06-10.html")
     assert "<details" in open(path, encoding="utf-8").read()
+
+
+def _report_payload():
+    from datetime import date
+    from mcp_server.models import Subject, Comp, AdjustmentRules, ReportComp, ReportPayload
+    from mcp_server.estimate import reconcile
+    s = Subject(address="138 Cranberry Place SE", resolved_address="138 Cranberry Place SE",
+                lat=51.0, lng=-114.0, sqft=1416, year_built=2007, beds=3, baths=3, garage=1)
+    comps = [Comp(address=a, lat=51.0, lng=-114.0, sold_price=p, sold_date=date(2026, 4, 1),
+                  sqft=sq, year_built=2007, beds=3, baths=3, garage=2, distance_km=0.2)
+             for a, p, sq in [("71 Cranberry", 536_500, 1429), ("78 Cranberry", 560_000, 1425)]]
+    est = reconcile(s, comps, AdjustmentRules(), as_of=date(2026, 6, 10))
+    return ReportPayload(subject=s, comps=[ReportComp(comp=c) for c in comps], estimate=est,
+                         confidence_reasoning="ok", as_of=date(2026, 6, 10))
+
+
+def test_render_report_default_dir_is_cwd_independent(tmp_path, monkeypatch):
+    # Claude Desktop launches the stdio server from a non-writable CWD, so the DEFAULT output
+    # dir must be absolute (env/home), never CWD-relative — else makedirs("reports") fails.
+    import os
+    from datetime import date
+    from mcp_server.server import Tools
+    out = tmp_path / "out"
+    cwd = tmp_path / "cwd"; cwd.mkdir()
+    monkeypatch.setenv("KV_COMP_REPORTS_DIR", str(out))
+    monkeypatch.chdir(cwd)
+    tools = Tools(source=None, as_of=date(2026, 6, 10))
+    path = tools.render_report(_report_payload())          # NO out_dir -> uses default
+    assert os.path.isabs(path) and os.path.exists(path)
+    assert os.path.commonpath([path, str(out)]) == str(out)   # written under the env dir
+    assert not (cwd / "reports").exists()                      # NOT CWD-relative (the bug)
+
+
+def test_render_report_falls_back_to_tempdir_when_primary_unwritable(tmp_path, monkeypatch):
+    import os
+    from datetime import date
+    from mcp_server.server import Tools
+    blocker = tmp_path / "afile"; blocker.write_text("x")  # a FILE, not a dir
+    monkeypatch.setenv("KV_COMP_REPORTS_DIR", str(blocker / "sub"))  # makedirs under a file -> OSError
+    tools = Tools(source=None, as_of=date(2026, 6, 10))
+    path = tools.render_report(_report_payload())          # NO out_dir
+    assert os.path.exists(path)
+    assert os.path.basename(os.path.dirname(path)) == "kv-comp-reports"
+    assert str(blocker) not in path                        # did not use the broken primary
