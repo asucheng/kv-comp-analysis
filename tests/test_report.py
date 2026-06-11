@@ -51,10 +51,33 @@ def test_render_is_self_contained_no_external_refs():
     assert "<details" in html  # interactive tiles present
 
 
-def test_render_shows_pair_traces_in_tiles():
+def test_render_shows_grouping_evidence_in_tiles():
     html = render_report_html(_payload())
     assert "Δ" in html  # arithmetic detail rendered
     assert "larger half" in html  # aggregate line rendered (grouping evidence present)
+
+
+def test_render_shows_pair_traces_in_tiles():
+    # Comps share beds/baths/garage but sqft spans >=8%, so SIZE derives via matched pairs,
+    # exercising the pair-trace table (comp_a/comp_b/arithmetic/Implies) in the tile.
+    from mcp_server.models import Subject, Comp, AdjustmentRules, ReportComp, ReportPayload
+    from mcp_server.estimate import reconcile
+    s = Subject(address="S", lat=51.0, lng=-114.0, sqft=1800, year_built=2010,
+                beds=3, baths=2, garage=2)
+    comps = [Comp(address=a, lat=51.0, lng=-114.0, sold_price=p, sold_date=date(2026, 4, 1),
+                  sqft=sq, year_built=2010, beds=3, baths=2, garage=2, distance_km=0.2)
+             for a, p, sq in [("Aaa St", 690_000, 1700), ("Bbb St", 760_000, 2000),
+                              ("Ccc St", 700_000, 1720), ("Ddd St", 770_000, 2010)]]
+    est = reconcile(s, comps, AdjustmentRules(), as_of=date(2026, 6, 1))
+    size = next(c for c in est.coefficients if c.factor == "size")
+    assert size.method == "matched_pair" and size.pairs  # precondition: real pairs exist
+    html = render_report_html(ReportPayload(
+        subject=s, comps=[ReportComp(comp=c) for c in comps], estimate=est,
+        confidence_reasoning="ok", as_of=date(2026, 6, 1)))
+    assert "Implies" in html                       # pair-trace table header rendered
+    assert "Aaa St" in html                        # a comp address appears in a trace row
+    assert "median of" in html                     # matched-pair aggregate line rendered
+    assert "Δ" in html                             # arithmetic detail rendered
 
 
 def test_render_excluded_reason_present():
