@@ -1,9 +1,11 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from statistics import median, mean
 from typing import Optional
-from mcp_server.models import Subject, Comp, Disclosure, AdjMethod, SourceType, Confidence
+from mcp_server.models import (
+    Subject, Comp, Disclosure, AdjMethod, SourceType, Confidence, PairTrace,
+)
 from mcp_server.comps import months_between
 
 
@@ -14,6 +16,9 @@ class Derivation:
     source_type: SourceType
     evidence: str
     confidence: Confidence
+    pairs: list[PairTrace] = field(default_factory=list)
+    groups: Optional[dict] = None
+    regression: Optional[dict] = None
 
 
 def _none(reason: str) -> Derivation:
@@ -52,6 +57,7 @@ def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date, clamp
     # so any $/sqft difference is pure market movement.
     SIZE_TOL = 0.05
     rates: list[float] = []
+    pairs: list[PairTrace] = []
     for i in range(n):
         for j in range(i + 1, n):
             a, b = comps[i], comps[j]
@@ -65,13 +71,18 @@ def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date, clamp
             op, rp = older.price_per_sqft, recent.price_per_sqft
             if op <= 0:
                 continue
-            rates.append(((rp - op) / op) / (om - rm))
+            rate = ((rp - op) / op) / (om - rm)
+            rates.append(rate)
+            pairs.append(PairTrace(
+                comp_a=recent.address, comp_b=older.address,
+                detail=f"${rp:.0f}/sqft ({rm:.0f} mo) vs ${op:.0f}/sqft ({om:.0f} mo), {om-rm:.0f} mo apart",
+                value=round(rate, 5)))
     if rates:
         raw = median(rates)
         per_month = _clamp(raw, clamp)
         conf = "low" if per_month != raw else ("high" if len(rates) >= 2 else "medium")
         return Derivation(round(per_month, 5), "matched_pair", "article-method",
-                          f"{len(rates)} size-matched pair(s) across time", conf)
+                          f"{len(rates)} size-matched pair(s) across time", conf, pairs=pairs)
 
     # Rungs 2-3: size-normalize each price to the subject's size, then group / regress.
     marg = linreg_slope([c.sqft for c in comps], [c.sold_price for c in comps])
@@ -94,7 +105,10 @@ def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date, clamp
             conf = "low" if per_month != raw else "medium"
             ev = (f"size-normalized: recent ${rp:.0f}/sqft (~{rm:.0f} mo) vs older "
                   f"${op:.0f}/sqft (~{om:.0f} mo) over {gap:.0f} mo")
-            return Derivation(round(per_month, 5), "grouping", "article-method", ev, conf)
+            return Derivation(round(per_month, 5), "grouping", "article-method", ev, conf,
+                              groups={"recent_ppsf": round(rp), "recent_mo": round(rm),
+                                      "older_ppsf": round(op), "older_mo": round(om),
+                                      "gap_mo": round(gap)})
 
     slope = linreg_slope([-m for m in months], norm)
     if slope is None:
@@ -103,7 +117,8 @@ def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date, clamp
     raw = slope / my if my else 0.0
     per_month = _clamp(raw, clamp)
     return Derivation(round(per_month, 5), "regression", "article-method",
-                      f"least-squares on size-normalized $/sqft ({n} comps, small-N)", "low")
+                      f"least-squares on size-normalized $/sqft ({n} comps, small-N)", "low",
+                      regression={"n": n, "slope_per_mo": round(per_month, 5)})
 
 
 def _matched_pair_ppsf(subject: Subject, comps: list[Comp], prices: list[float]) -> Optional[Derivation]:

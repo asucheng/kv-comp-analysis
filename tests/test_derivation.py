@@ -146,3 +146,14 @@ def test_feature_unit_rejects_confounded_value():
     residuals = [c.sold_price for c in comps]
     dv = derive_feature_unit(s, comps, residuals, "garage")
     assert dv.method == "none"
+
+
+def test_time_trend_emits_pair_traces():
+    recent = [_comp(860_000, d=date(2026, 6, 1), addr="r1"),
+              _comp(862_000, d=date(2026, 5, 1), addr="r2")]
+    older = [_comp(800_000, d=date(2025, 12, 1), addr="o1"),
+             _comp(804_000, d=date(2026, 1, 1), addr="o2")]
+    dv = derive_time_trend(_subject(sqft=2000), recent + older, as_of=AS_OF, clamp=0.02)
+    assert dv.method == "matched_pair"
+    assert len(dv.pairs) >= 1
+    assert dv.pairs[0].comp_a and dv.pairs[0].comp_b
