@@ -1,15 +1,18 @@
 from __future__ import annotations
+import os
 from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 from mcp_server.models import (
     Subject, FindCompsResult, Estimate, CrossCheck, Criteria, AdjustmentRules, Overrides,
+    ReportPayload,
 )
 from mcp_server.compsource.base import CompSource, PropertyRecord
 from mcp_server.compsource.honestdoor import HonestDoorCompSource
 from mcp_server.geocode import Geocoder, NominatimGeocoder
 from mcp_server.comps import find_with_ladder
 from mcp_server.estimate import reconcile
+from mcp_server.report import render_report_html, slug
 
 # Fetch the candidate pool at Sam's HARD limits. Radius is never widened (3 km is a
 # hard limit), and recency is fetched at the ladder's 12-month cap so the only
@@ -106,6 +109,15 @@ class Tools:
                           vs_avm_pct=vs_avm, vs_assessment_pct=vs_assess,
                           verdict=verdict, notes=notes)
 
+    def render_report(self, payload: ReportPayload, out_dir: str = "reports") -> str:
+        """Write the self-contained HTML report to disk; return its absolute path."""
+        os.makedirs(out_dir, exist_ok=True)
+        name = slug(payload.subject.resolved_address or payload.subject.address)
+        path = os.path.abspath(os.path.join(out_dir, f"{name}-{payload.as_of}.html"))
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(render_report_html(payload))
+        return path
+
 
 def build_tools(source: Optional[CompSource] = None, geocoder: Optional[Geocoder] = None,
                 as_of: Optional[date] = None) -> Tools:
@@ -165,6 +177,19 @@ def main() -> None:
         """Sanity-check an estimate against the HonestDoor AVM and municipal assessment.
         Returns deltas and a verdict (consistent|review|divergent)."""
         return tools.cross_check(Subject(**subject), estimate_point).model_dump()
+
+    @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True,
+                           "openWorldHint": False, "title": "Render HTML report"})
+    def render_report(payload: dict) -> dict:
+        """Render the self-contained, interactive HTML comp report to disk and return its
+        absolute path. Call this as the FINAL step, once the value is settled (address
+        confirmed, any overrides applied). `payload` carries: subject, comps (each
+        {comp, kept, exclude_reason}) including excluded ones, the full estimate object
+        from estimate_value (with coefficients), plus agent-authored confidence_reasoning,
+        target_warnings (subject-specific, shown first) and verify_next. Surface the
+        returned path and a file:// link so the user can open it in a browser."""
+        payload.setdefault("as_of", tools.as_of.isoformat())
+        return {"path": tools.render_report(ReportPayload(**payload))}
 
     mcp.run()  # stdio transport — local, no hosting
 
