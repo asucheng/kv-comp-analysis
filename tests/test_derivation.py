@@ -159,6 +159,28 @@ def test_time_trend_emits_pair_traces():
     assert dv.pairs[0].comp_a and dv.pairs[0].comp_b
 
 
+def test_time_trend_pairs_must_be_feature_identical():
+    # A time matched-pair must isolate time: same beds/baths/garage/type, differing only in
+    # sale date (size already controlled by $/sqft + the ±5% size match). Size-matched but
+    # feature-different sales must NOT form a time pair — else a bed/bath premium leaks in as
+    # "appreciation". (a/b are 3-bed twins; c/d are 4-bed twins; cross pairs are forbidden.)
+    s = _subject(sqft=2000)
+    comps = [
+        _comp(800_000, sqft=2000, d=date(2025, 12, 1), beds=3, baths=2, garage=2, addr="a3_old"),
+        _comp(860_000, sqft=2000, d=date(2026, 5, 1),  beds=3, baths=2, garage=2, addr="b3_new"),
+        _comp(900_000, sqft=2000, d=date(2026, 5, 1),  beds=4, baths=3, garage=2, addr="c4_new"),
+        _comp(840_000, sqft=2000, d=date(2025, 12, 1), beds=4, baths=3, garage=2, addr="d4_old"),
+    ]
+    dv = derive_time_trend(s, comps, as_of=AS_OF, clamp=0.02)
+    assert dv.method == "matched_pair"
+    by_addr = {c.address: c for c in comps}
+    feats = lambda c: (c.beds, c.baths, c.garage, c.property_type)
+    for p in dv.pairs:
+        assert feats(by_addr[p.comp_a]) == feats(by_addr[p.comp_b]), \
+            f"time pair mixes features: {p.comp_a} vs {p.comp_b}"
+    assert len(dv.pairs) >= 2          # still finds the legit 3-bed and 4-bed twin pairs
+
+
 def test_marginal_ppsf_uses_median_of_all_pairs_with_traces():
     s = _subject(sqft=1800)
     # three matched pairs alike except size (>=8% apart), implying ~$50-60/sqft

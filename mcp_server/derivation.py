@@ -53,8 +53,12 @@ def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date, clamp
     months = [max(months_between(c.sold_date, as_of), 0) for c in comps]
     n = len(comps)
 
-    # Rung 1: size-matched pairs across time. Same size (+/-5%) but different sale dates,
-    # so any $/sqft difference is pure market movement.
+    # Rung 1: feature-matched pairs across time. Identical features (beds/baths/garage/type)
+    # AND same size (+/-5%), differing only in sale date — so the $/sqft gap is pure market
+    # movement, not a bed/bath/quality premium. The size match is kept because $/sqft is not
+    # size-invariant (larger homes sell at lower $/sqft), so dropping it lets size leak back
+    # in through $/sqft. This mirrors the size/feature derivations, which also isolate one
+    # variable by holding the others identical.
     SIZE_TOL = 0.05
     rates: list[float] = []
     pairs: list[PairTrace] = []
@@ -63,6 +67,8 @@ def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date, clamp
             a, b = comps[i], comps[j]
             big = max(a.sqft, b.sqft)
             if big == 0 or abs(a.sqft - b.sqft) / big > SIZE_TOL:
+                continue
+            if (a.beds, a.baths, a.garage, a.property_type) != (b.beds, b.baths, b.garage, b.property_type):
                 continue
             mi, mj = months[i], months[j]
             if mi == mj:
