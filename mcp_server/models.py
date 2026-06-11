@@ -114,6 +114,28 @@ class Adjustment(BaseModel):
     rationale: str
 
 
+class PairTrace(BaseModel):
+    comp_a: str
+    comp_b: str
+    detail: str          # human arithmetic, e.g. "Δ$46,355 over 167 sqft"
+    value: float         # per-unit value this pair implies (pct for time, $ otherwise)
+
+
+class CoefficientTrace(BaseModel):
+    factor: str                       # time | size | beds | baths | garage
+    method: AdjMethod
+    source_type: SourceType
+    value: float                      # pct for time, $ otherwise
+    is_pct: bool
+    confidence: Confidence
+    equation: str                     # general formula used
+    pairs: list[PairTrace] = Field(default_factory=list)
+    groups: Optional[dict] = None     # populated when method == grouping
+    regression: Optional[dict] = None # populated when method == regression
+    aggregate: str                    # e.g. "median of 3 pairs = $19,580"
+    summary: str                      # = existing evidence string (fallback)
+
+
 class Disclosure(BaseModel):
     """A Tier-2 (filtered-not-adjusted) caveat: imbalance + likely direction of bias."""
     factor: str                       # "age" | "location" | "transactional"
@@ -140,6 +162,7 @@ class Estimate(BaseModel):
     per_comp: list[CompAdjustment]
     disclosures: list[Disclosure] = Field(default_factory=list)
     method_notes: list[str] = Field(default_factory=list)
+    coefficients: list[CoefficientTrace] = Field(default_factory=list)
 
 
 class CrossCheck(BaseModel):
@@ -149,3 +172,19 @@ class CrossCheck(BaseModel):
     vs_assessment_pct: Optional[float] = None
     verdict: str
     notes: list[str] = Field(default_factory=list)
+
+
+class ReportComp(BaseModel):
+    comp: Comp
+    kept: bool = True
+    exclude_reason: Optional[str] = None
+
+
+class ReportPayload(BaseModel):
+    subject: Subject
+    comps: list[ReportComp]
+    estimate: Estimate
+    confidence_reasoning: str = ""
+    target_warnings: list[str] = Field(default_factory=list)
+    verify_next: list[str] = Field(default_factory=list)
+    as_of: date
