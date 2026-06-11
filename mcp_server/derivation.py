@@ -237,7 +237,7 @@ def derive_feature_unit(subject: Subject, comps: list[Comp],
                 rates.append(rate)
                 pairs.append(PairTrace(
                     comp_a=comps[i].address, comp_b=comps[j].address,
-                    detail=f"Δresidual ${residuals[i]-residuals[j]:,.0f} over {fa-fb:+g} {factor}",
+                    detail=f"Δresidual ${abs(residuals[i]-residuals[j]):,.0f} over {abs(fa-fb):g} {factor}",
                     value=round(rate, 2)))
     if rates:
         per_unit = median(rates)
@@ -268,7 +268,7 @@ def derive_feature_unit(subject: Subject, comps: list[Comp],
     if slope is not None and 0 < slope <= cap:
         return Derivation(round(slope, 2), "regression", "article-method",
                           f"slope of residual~{factor} over {len(known)} comps", "low",
-                          regression={"n": len(known), "slope": round(slope, 2)})
+                          regression={"n": len(known), "slope_per_unit": round(slope, 2)})
     return _none(f"{factor} signal too noisy/confounded to value reliably; not adjusted")
 
 
