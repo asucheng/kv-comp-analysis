@@ -112,3 +112,21 @@ def test_coefficient_equation_adapts_to_grouping_method():
     assert size.method == "grouping"
     assert size.groups is not None and not size.pairs
     assert "half" in size.equation  # equation reflects grouping, not matched-pair
+
+
+def test_feature_equation_discloses_size_constraint():
+    # Feature pairs are held within 10% size of each other (so leftover size-adjustment error
+    # can't leak into the feature value). The report's methodology line must say so, not hide it.
+    from mcp_server.models import Subject, Comp, AdjustmentRules
+    from mcp_server.estimate import reconcile
+    s = Subject(address="S", lat=51.05, lng=-114.08, sqft=1800, year_built=1985,
+                beds=3, baths=2, garage=2, property_type="detached")
+    comps = [Comp(address=a, lat=51.05, lng=-114.08, sold_price=p, sold_date=date(2026, 5, 1),
+                  sqft=sq, year_built=1985, beds=3, baths=2, garage=g, property_type="detached")
+             for a, p, sq, g in [("a", 700_000, 1800, 1), ("b", 712_000, 1800, 2),
+                                 ("c", 705_000, 1850, 1), ("d", 718_000, 1850, 2)]]
+    est = reconcile(s, comps, AdjustmentRules(), as_of=date(2026, 6, 1))
+    garage = next(c for c in est.coefficients if c.factor == "garage")
+    assert garage.method == "matched_pair"
+    assert "10%" in garage.equation            # the size constraint is disclosed
+    assert "10%" in garage.aggregate or "10%" in garage.summary

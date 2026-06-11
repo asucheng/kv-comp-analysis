@@ -292,8 +292,8 @@ def derive_feature_unit(subject: Subject, comps: list[Comp],
         if 0 < per_unit <= cap:            # positive & plausible — asserted on the AGGREGATE
             conf = "high" if len(rates) >= 3 else "medium"
             return Derivation(round(per_unit, 2), "matched_pair", "article-method",
-                              f"{factor}: {len(rates)} matched pair(s) alike except {factor}; "
-                              f"per-unit median ${per_unit:.0f}", conf, pairs=pairs)
+                              f"{factor}: {len(rates)} pair(s) alike except {factor} "
+                              f"(size within 10%); per-unit median ${per_unit:.0f}", conf, pairs=pairs)
 
     # Rung 2: grouping (above-median vs at-or-below count). Confound-prone, so capped.
     cut = median([k for k, _ in known])
