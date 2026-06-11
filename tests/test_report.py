@@ -52,9 +52,24 @@ def test_render_is_self_contained_no_external_refs():
 
 
 def test_render_shows_grouping_evidence_in_tiles():
-    html = render_report_html(_payload())
-    assert "Δ" in html  # arithmetic detail rendered
-    assert "larger half" in html  # aggregate line rendered (grouping evidence present)
+    # SIZE falls to grouping when no two comps are feature-identical at different sizes (each
+    # size tier carries a distinct bed count), while BATHS still derives via matched pairs — so
+    # the report must render BOTH a grouping aggregate ("larger half") and pair arithmetic ("Δ").
+    s = Subject(address="S", lat=51.0, lng=-114.0, sqft=1500, year_built=2010,
+                beds=3, baths=2, garage=2, property_type="detached")
+    comps = [Comp(address=a, lat=51.0, lng=-114.0, sold_price=p, sold_date=date(2026, 4, 1),
+                  sqft=sq, year_built=2010, beds=bd, baths=ba, garage=2,
+                  property_type="detached", distance_km=0.2)
+             for a, p, sq, bd, ba in [("A St", 500_000, 1400, 3, 2), ("B St", 516_000, 1400, 3, 3),
+                                      ("C St", 560_000, 1700, 4, 2), ("D St", 576_000, 1700, 4, 3)]]
+    est = reconcile(s, comps, AdjustmentRules(), as_of=date(2026, 6, 10))
+    size = next(c for c in est.coefficients if c.factor == "size")
+    assert size.method == "grouping"  # precondition: size really fell to grouping
+    html = render_report_html(ReportPayload(
+        subject=s, comps=[ReportComp(comp=c) for c in comps], estimate=est,
+        confidence_reasoning="x", as_of=date(2026, 6, 10)))
+    assert "Δ" in html             # matched-pair arithmetic (baths) rendered
+    assert "larger half" in html   # grouping aggregate (size) rendered
 
 
 def test_render_shows_pair_traces_in_tiles():

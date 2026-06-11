@@ -143,7 +143,7 @@ def _confidence(n: int, cov: float, ladder_depth: int, derived: DerivedSet) -> C
     else:
         base = "medium"
     # Method strength: if time or size leaned on regression/none, or a Tier-1 derivation
-    # reports low confidence (e.g. a clamped trend), cap at medium.
+    # reports low confidence, cap at medium.
     weak = {"regression", "none"}
     if (derived.time.method in weak or derived.size.method in weak
             or derived.time.confidence == "low" or derived.size.confidence == "low"):
@@ -160,7 +160,7 @@ def reconcile(subject: Subject, comps: list[Comp], rules: AdjustmentRules, *,
     notes: list[str] = []
 
     # 1. time
-    time = derive_time_trend(subject, comps, as_of=as_of, clamp=rules.trend_clamp)
+    time = derive_time_trend(subject, comps, as_of=as_of)
     if overrides.time_pct_per_month is not None:
         time = _override(time, overrides.time_pct_per_month)
     tprices = [c.sold_price * (1 + time.value * max(months_between(c.sold_date, as_of), 0))

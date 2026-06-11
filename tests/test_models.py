@@ -38,9 +38,10 @@ def test_relaxation_records_a_boolean_toggle():
 def test_adjustment_rules_trimmed_to_config_only():
     from mcp_server.models import AdjustmentRules
     r = AdjustmentRules()
-    assert (r.trend_clamp, r.min_comps, r.outlier_iqr, r.drop_outliers) == (0.02, 4, 1.5, False)
-    # invented constants are gone
+    assert (r.min_comps, r.outlier_iqr, r.drop_outliers) == (4, 1.5, False)
+    # invented constants are gone (incl. the removed trend_clamp — the trend is no longer capped)
     assert not hasattr(r, "age_rate")
+    assert not hasattr(r, "trend_clamp")
     assert not hasattr(r, "size_elast")
     assert not hasattr(r, "weight_a")
 
