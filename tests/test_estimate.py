@@ -74,3 +74,22 @@ def test_reconcile_respects_overrides():
 def test_reconcile_empty_raises():
     with pytest.raises(ValueError):
         reconcile(_subject(), [], AdjustmentRules(), as_of=AS_OF)
+
+
+def test_estimate_exposes_coefficient_traces():
+    from datetime import date
+    from mcp_server.models import Subject, Comp, AdjustmentRules
+    from mcp_server.estimate import reconcile
+    s = Subject(address="S", lat=51.05, lng=-114.08, sqft=1800, year_built=1985,
+                beds=3, baths=2, garage=2)
+    comps = [Comp(address=a, lat=51.05, lng=-114.08, sold_price=p, sold_date=date(2026, 5, 1),
+                  sqft=sq, year_built=1985, beds=3, baths=2, garage=g)
+             for a, p, sq, g in [("a", 700_000, 1800, 1), ("b", 712_000, 1800, 2),
+                                 ("c", 705_000, 2000, 1), ("d", 718_000, 2000, 2)]]
+    est = reconcile(s, comps, AdjustmentRules(), as_of=date(2026, 6, 1))
+    factors = [c.factor for c in est.coefficients]
+    assert factors == ["time", "size", "beds", "baths", "garage"]
+    size = next(c for c in est.coefficients if c.factor == "size")
+    assert size.is_pct is False and size.value == size.value  # present, numeric
+    time = next(c for c in est.coefficients if c.factor == "time")
+    assert time.is_pct is True
