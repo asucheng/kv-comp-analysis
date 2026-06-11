@@ -38,6 +38,10 @@ You surface judgment; you never hide it behind a number.
    len(relaxations)` and the FULL comp set. Adjustments are derived from the comps and reported
    with method/source/confidence; pass `overrides` to correct any coefficient.
 5. **Present the file** (format below).
+6. **`render_report(payload)`** — as the FINAL step, once the value is settled (address
+   confirmed, any `overrides` applied). Assemble `payload` from the estimate plus your
+   narrative, then surface the returned path and a `file://` link so the user can open the
+   interactive report in a browser. Re-running after an override overwrites the same file.
 
 ## Judgment rules
 
@@ -72,6 +76,24 @@ You surface judgment; you never hide it behind a number.
 
 If the underwriter disputes a derived number, re-run `estimate_value` with `overrides`
 (e.g. `{"garage_value": 10000}`) and show the revised file.
+
+## The HTML report (`render_report`)
+
+Build `payload` and call `render_report`:
+- `subject` — the confirmed subject object.
+- `comps` — a list of `{comp, kept, exclude_reason}`: every comp you considered, with
+  `kept: false` + a reason for the ones you curated out (so the report shows them).
+- `estimate` — the object returned by `estimate_value` verbatim (it carries `coefficients`
+  with the per-factor derivation traces the report renders into expandable tiles).
+- `confidence_reasoning` — your one-paragraph "why" for the confidence.
+- `target_warnings` — subject-specific cautions (e.g. "subject's own recent sale is in the
+  pool", "semi subject vs. detached comps"). These render FIRST, above the standard
+  project-level disclaimers (which the renderer adds automatically — do not repeat them).
+- `verify_next` — your "what I'd verify next" bullets.
+
+Then post the returned path to the user, e.g.:
+`✅ Interactive report: /abs/path/138-cranberry-place-se-2026-06-10.html`
+`[open report](file:///abs/path/138-cranberry-place-se-2026-06-10.html)`
 
 ## Extending this skill (playbooks)
 

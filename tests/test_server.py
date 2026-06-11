@@ -129,3 +129,27 @@ def test_estimate_value_payload_and_overrides():
     assert est.disclosures                              # Tier-2 caveats present
     size = next(a for a in est.per_comp[0].adjustments if a.factor == "size")
     assert size.source_type == "our-judgment"           # override re-tags it
+
+
+def test_render_report_writes_file(tmp_path):
+    from datetime import date
+    from mcp_server.server import Tools
+    from mcp_server.models import (
+        Subject, Comp, AdjustmentRules, ReportComp, ReportPayload,
+    )
+    from mcp_server.estimate import reconcile
+    s = Subject(address="138 Cranberry Place SE", resolved_address="138 Cranberry Place SE",
+                lat=51.0, lng=-114.0, sqft=1416, year_built=2007, beds=3, baths=3, garage=1)
+    comps = [Comp(address=a, lat=51.0, lng=-114.0, sold_price=p, sold_date=date(2026, 4, 1),
+                  sqft=sq, year_built=2007, beds=3, baths=3, garage=2, distance_km=0.2)
+             for a, p, sq in [("71 Cranberry", 536_500, 1429), ("78 Cranberry", 560_000, 1425),
+                              ("420 Cranberry", 535_000, 1356), ("389 Cranberry", 558_500, 1358)]]
+    est = reconcile(s, comps, AdjustmentRules(), as_of=date(2026, 6, 10))
+    payload = ReportPayload(subject=s, comps=[ReportComp(comp=c) for c in comps], estimate=est,
+                            confidence_reasoning="ok", as_of=date(2026, 6, 10))
+    tools = Tools(source=None, as_of=date(2026, 6, 10))
+    path = tools.render_report(payload, out_dir=str(tmp_path))
+    import os
+    assert os.path.isabs(path) and os.path.exists(path)
+    assert path.endswith("138-cranberry-place-se-2026-06-10.html")
+    assert "<details" in open(path, encoding="utf-8").read()

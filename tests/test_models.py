@@ -65,3 +65,31 @@ def test_overrides_all_optional():
     o = Overrides()
     assert o.marginal_ppsf is None and o.garage_value is None
     assert Overrides(marginal_ppsf=50.0).marginal_ppsf == 50.0
+
+
+def test_coefficient_trace_and_report_payload_models():
+    from datetime import date
+    from mcp_server.models import (
+        PairTrace, CoefficientTrace, Estimate, CompAdjustment,
+        ReportComp, ReportPayload, Subject, Comp,
+    )
+    pt = PairTrace(comp_a="A", comp_b="B", detail="Δ$10,000 over 100 sqft", value=100.0)
+    ct = CoefficientTrace(
+        factor="size", method="matched_pair", source_type="article-method",
+        value=284.0, is_pct=False, confidence="high",
+        equation="per-sqft $ = median of Δprice / Δsqft", pairs=[pt],
+        aggregate="median of 1 pair = $284/sqft", summary="1 matched pair",
+    )
+    est = Estimate(point=500_000, low=480_000, high=520_000, confidence="high",
+                   per_comp=[], coefficients=[ct])
+    assert est.coefficients[0].pairs[0].comp_a == "A"
+    subj = Subject(address="S", sqft=1800)
+    comp = Comp(address="C", lat=51.0, lng=-114.0, sold_price=500_000,
+                sold_date=date(2026, 5, 1), sqft=1800)
+    payload = ReportPayload(
+        subject=subj, comps=[ReportComp(comp=comp, kept=True)], estimate=est,
+        confidence_reasoning="Tight cluster.", target_warnings=["Subject's own sale in pool."],
+        verify_next=["Confirm basement."], as_of=date(2026, 6, 10),
+    )
+    assert payload.comps[0].kept is True
+    assert payload.estimate.coefficients[0].value == 284.0

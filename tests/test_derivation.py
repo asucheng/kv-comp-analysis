@@ -146,3 +146,42 @@ def test_feature_unit_rejects_confounded_value():
     residuals = [c.sold_price for c in comps]
     dv = derive_feature_unit(s, comps, residuals, "garage")
     assert dv.method == "none"
+
+
+def test_time_trend_emits_pair_traces():
+    recent = [_comp(860_000, d=date(2026, 6, 1), addr="r1"),
+              _comp(862_000, d=date(2026, 5, 1), addr="r2")]
+    older = [_comp(800_000, d=date(2025, 12, 1), addr="o1"),
+             _comp(804_000, d=date(2026, 1, 1), addr="o2")]
+    dv = derive_time_trend(_subject(sqft=2000), recent + older, as_of=AS_OF, clamp=0.02)
+    assert dv.method == "matched_pair"
+    assert len(dv.pairs) >= 1
+    assert dv.pairs[0].comp_a and dv.pairs[0].comp_b
+
+
+def test_marginal_ppsf_uses_median_of_all_pairs_with_traces():
+    s = _subject(sqft=1800)
+    # three matched pairs alike except size (>=8% apart), implying ~$50-60/sqft
+    comps = [_comp(700_000, sqft=1800, addr="a"), _comp(710_000, sqft=2000, addr="b"),
+             _comp(702_000, sqft=1800, addr="c"), _comp(715_000, sqft=2000, addr="d"),
+             _comp(704_000, sqft=1800, addr="e"), _comp(719_000, sqft=2000, addr="f")]
+    prices = [c.sold_price for c in comps]
+    dv = derive_marginal_ppsf(s, comps, prices)
+    assert dv.method == "matched_pair"
+    assert len(dv.pairs) >= 3          # all qualifying pairs recorded, not just the first
+    from statistics import median
+    # fixture uses integer-divisor sqft gaps, so median-of-rounded == round-of-median here
+    assert dv.value == round(median([p.value for p in dv.pairs]), 2)
+
+
+def test_feature_unit_emits_pair_traces():
+    s = _subject(garage=2)
+    comps = [_comp(700_000, sqft=1800, garage=1, addr="a"),
+             _comp(712_000, sqft=1800, garage=2, addr="b"),
+             _comp(705_000, sqft=1850, garage=1, addr="c"),
+             _comp(718_000, sqft=1850, garage=2, addr="d")]
+    residuals = [c.sold_price for c in comps]
+    dv = derive_feature_unit(s, comps, residuals, "garage")
+    assert dv.method == "matched_pair"
+    assert len(dv.pairs) >= 1
+    assert "garage" in dv.pairs[0].detail

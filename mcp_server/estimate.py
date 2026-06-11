@@ -5,7 +5,7 @@ from statistics import median, mean, pstdev, quantiles
 from typing import Optional
 from mcp_server.models import (
     Subject, Comp, AdjustmentRules, Overrides, Adjustment, CompAdjustment,
-    Estimate, Confidence,
+    Estimate, Confidence, CoefficientTrace,
 )
 from mcp_server.comps import months_between
 from mcp_server.derivation import (
@@ -45,6 +45,41 @@ def _adj(factor, method, source, *, pct=None, dollar=None, evidence, conf) -> Ad
     return Adjustment(factor=factor, method_used=method, source_type=source,
                       value_pct=pct, value_dollar=dollar, evidence=evidence,
                       confidence=conf, rationale=rationale)
+
+
+def _coeff(factor: str, dv: Derivation, *, is_pct: bool, unit: Optional[str] = None) -> CoefficientTrace:
+    n = len(dv.pairs)
+    if is_pct:
+        aggregate = f"median of {n} size-matched pair(s) = {dv.value*100:+.3f}%/mo" if n else dv.evidence
+    elif unit:
+        aggregate = f"median of {n} matched pair(s) = ${dv.value:,.0f}/{unit}" if n else dv.evidence
+    else:
+        aggregate = f"median of {n} matched pair(s) = ${dv.value:,.0f}/sqft" if n else dv.evidence
+
+    if dv.method == "matched_pair":
+        if is_pct:
+            equation = "monthly % = median over size-matched pairs of ((p_recent − p_older)/p_older) / Δmonths"
+        elif unit:
+            equation = f"per-{unit} $ = median over pairs alike except {factor} of Δresidual / Δcount"
+        else:
+            equation = "per-sqft $ = median over matched pairs of Δprice / Δsqft"
+    elif dv.method == "grouping":
+        if is_pct:
+            equation = "monthly % = (recent − older median $/sqft) / Δmonths, size-normalized"
+        elif unit:
+            equation = f"per-{unit} $ = (higher-count − lower-count median residual) / Δcount"
+        else:
+            equation = "per-sqft $ = (larger-half − smaller-half median price) / Δsqft"
+    elif dv.method == "regression":
+        kind = "%/mo" if is_pct else (f"$/{unit}" if unit else "$/sqft")
+        equation = f"least-squares slope ({kind}) across the comp set"
+    else:  # none — not adjusted
+        equation = "no usable signal in this comp set; not adjusted"
+
+    return CoefficientTrace(
+        factor=factor, method=dv.method, source_type=dv.source_type, value=dv.value,
+        is_pct=is_pct, confidence=dv.confidence, equation=equation, pairs=dv.pairs,
+        groups=dv.groups, regression=dv.regression, aggregate=aggregate, summary=dv.evidence)
 
 
 def apply_adjustments(subject: Subject, comp: Comp, derived: DerivedSet, *, as_of: date) -> CompAdjustment:
@@ -180,5 +215,14 @@ def reconcile(subject: Subject, comps: list[Comp], rules: AdjustmentRules, *,
     conf = _confidence(len(per_comp), cov, ladder_depth, derived)
     notes.append(f"{len(per_comp)} comps, $/sqft CoV {cov:.2f}, ladder depth {ladder_depth}")
 
+    coefficients = [
+        _coeff("time", time, is_pct=True),
+        _coeff("size", size, is_pct=False),
+        _coeff("beds", feats["beds"], is_pct=False, unit="bed"),
+        _coeff("baths", feats["baths"], is_pct=False, unit="bath"),
+        _coeff("garage", feats["garage"], is_pct=False, unit="garage"),
+    ]
+
     return Estimate(point=point, low=low, high=high, confidence=conf, per_comp=per_comp,
+                    coefficients=coefficients,
                     disclosures=compute_disclosures(subject, comps, as_of=as_of), method_notes=notes)

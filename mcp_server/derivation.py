@@ -1,9 +1,11 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from statistics import median, mean
 from typing import Optional
-from mcp_server.models import Subject, Comp, Disclosure, AdjMethod, SourceType, Confidence
+from mcp_server.models import (
+    Subject, Comp, Disclosure, AdjMethod, SourceType, Confidence, PairTrace,
+)
 from mcp_server.comps import months_between
 
 
@@ -14,6 +16,9 @@ class Derivation:
     source_type: SourceType
     evidence: str
     confidence: Confidence
+    pairs: list[PairTrace] = field(default_factory=list)
+    groups: Optional[dict] = None
+    regression: Optional[dict] = None
 
 
 def _none(reason: str) -> Derivation:
@@ -52,6 +57,7 @@ def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date, clamp
     # so any $/sqft difference is pure market movement.
     SIZE_TOL = 0.05
     rates: list[float] = []
+    pairs: list[PairTrace] = []
     for i in range(n):
         for j in range(i + 1, n):
             a, b = comps[i], comps[j]
@@ -65,13 +71,18 @@ def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date, clamp
             op, rp = older.price_per_sqft, recent.price_per_sqft
             if op <= 0:
                 continue
-            rates.append(((rp - op) / op) / (om - rm))
+            rate = ((rp - op) / op) / (om - rm)
+            rates.append(rate)
+            pairs.append(PairTrace(
+                comp_a=recent.address, comp_b=older.address,
+                detail=f"${rp:.0f}/sqft ({rm:.0f} mo) vs ${op:.0f}/sqft ({om:.0f} mo), {om-rm:.0f} mo apart",
+                value=round(rate, 5)))
     if rates:
         raw = median(rates)
         per_month = _clamp(raw, clamp)
         conf = "low" if per_month != raw else ("high" if len(rates) >= 2 else "medium")
         return Derivation(round(per_month, 5), "matched_pair", "article-method",
-                          f"{len(rates)} size-matched pair(s) across time", conf)
+                          f"{len(rates)} size-matched pair(s) across time", conf, pairs=pairs)
 
     # Rungs 2-3: size-normalize each price to the subject's size, then group / regress.
     marg = linreg_slope([c.sqft for c in comps], [c.sold_price for c in comps])
@@ -94,7 +105,10 @@ def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date, clamp
             conf = "low" if per_month != raw else "medium"
             ev = (f"size-normalized: recent ${rp:.0f}/sqft (~{rm:.0f} mo) vs older "
                   f"${op:.0f}/sqft (~{om:.0f} mo) over {gap:.0f} mo")
-            return Derivation(round(per_month, 5), "grouping", "article-method", ev, conf)
+            return Derivation(round(per_month, 5), "grouping", "article-method", ev, conf,
+                              groups={"recent_ppsf": round(rp), "recent_mo": round(rm),
+                                      "older_ppsf": round(op), "older_mo": round(om),
+                                      "gap_mo": round(gap)})
 
     slope = linreg_slope([-m for m in months], norm)
     if slope is None:
@@ -103,12 +117,16 @@ def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date, clamp
     raw = slope / my if my else 0.0
     per_month = _clamp(raw, clamp)
     return Derivation(round(per_month, 5), "regression", "article-method",
-                      f"least-squares on size-normalized $/sqft ({n} comps, small-N)", "low")
+                      f"least-squares on size-normalized $/sqft ({n} comps, small-N)", "low",
+                      regression={"n": n, "slope_per_mo": round(per_month, 5)})
 
 
 def _matched_pair_ppsf(subject: Subject, comps: list[Comp], prices: list[float]) -> Optional[Derivation]:
-    """Two comps alike except sqft (>=8% apart, same beds/baths/garage) -> Δprice/Δsqft."""
+    """Comps alike except sqft (>=8% apart, same beds/baths/garage) -> Δprice/Δsqft.
+    Collects EVERY qualifying pair and uses their median (uniform with time/features)."""
     n = len(comps)
+    rates: list[float] = []
+    pairs: list[PairTrace] = []
     for i in range(n):
         for j in range(i + 1, n):
             a, b = comps[i], comps[j]
@@ -119,9 +137,17 @@ def _matched_pair_ppsf(subject: Subject, comps: list[Comp], prices: list[float])
                 continue
             rate = (prices[i] - prices[j]) / dsqft
             if 0 < rate < 1000:
-                return Derivation(round(rate, 2), "matched_pair", "article-method",
-                                  f"pair {a.address}/{b.address}: Δ${prices[i]-prices[j]:.0f} "
-                                  f"over {dsqft:.0f} sqft", "high")
+                rates.append(rate)
+                pairs.append(PairTrace(
+                    comp_a=a.address, comp_b=b.address,
+                    detail=f"Δ${abs(prices[i]-prices[j]):,.0f} over {abs(dsqft):,.0f} sqft",
+                    value=round(rate, 2)))
+    if rates:
+        rate = median(rates)
+        conf = "high" if len(rates) >= 2 else "medium"
+        return Derivation(round(rate, 2), "matched_pair", "article-method",
+                          f"{len(rates)} matched pair(s); per-sqft median ${rate:.0f}",
+                          conf, pairs=pairs)
     return None
 
 
@@ -146,12 +172,16 @@ def derive_marginal_ppsf(subject: Subject, comps: list[Comp], prices: list[float
             if 0 < rate < 1000:
                 return Derivation(round(rate, 2), "grouping", "article-method",
                                   f"larger half median ${lp:.0f}@{ls:.0f}sqft vs smaller "
-                                  f"${sp:.0f}@{ss:.0f}sqft", "medium")
+                                  f"${sp:.0f}@{ss:.0f}sqft", "medium",
+                                  groups={"large_med_price": round(lp), "large_med_sqft": round(ls),
+                                          "small_med_price": round(sp), "small_med_sqft": round(ss),
+                                          "rate_per_sqft": round(rate, 2)})
 
     slope = linreg_slope(sqfts, prices)
     if slope is not None and 0 < slope < 1000:
         return Derivation(round(slope, 2), "regression", "article-method",
-                          f"slope of price~sqft over {len(comps)} comps", "low")
+                          f"slope of price~sqft over {len(comps)} comps", "low",
+                          regression={"n": len(comps), "slope_per_sqft": round(slope, 2)})
     return _none("no usable size spread; size not adjusted")
 
 
@@ -196,6 +226,7 @@ def derive_feature_unit(subject: Subject, comps: list[Comp],
     # Rung 1: matched pairs — control for the confounds by selection, value ONE unit.
     n = len(comps)
     rates: list[float] = []
+    pairs: list[PairTrace] = []
     for i in range(n):
         for j in range(i + 1, n):
             fa, fb = getattr(comps[i], factor), getattr(comps[j], factor)
@@ -204,12 +235,16 @@ def derive_feature_unit(subject: Subject, comps: list[Comp],
             rate = (residuals[i] - residuals[j]) / (fa - fb)
             if 0 < rate <= cap:
                 rates.append(rate)
+                pairs.append(PairTrace(
+                    comp_a=comps[i].address, comp_b=comps[j].address,
+                    detail=f"Δresidual ${abs(residuals[i]-residuals[j]):,.0f} over {abs(fa-fb):g} {factor}",
+                    value=round(rate, 2)))
     if rates:
         per_unit = median(rates)
         conf = "high" if len(rates) >= 3 else "medium"
         return Derivation(round(per_unit, 2), "matched_pair", "article-method",
                           f"{factor}: {len(rates)} matched pair(s) alike except {factor}; "
-                          f"per-unit median ${per_unit:.0f}", conf)
+                          f"per-unit median ${per_unit:.0f}", conf, pairs=pairs)
 
     # Rung 2: grouping (above-median vs at-or-below count). Confound-prone, so capped.
     cut = median([k for k, _ in known])
@@ -224,12 +259,16 @@ def derive_feature_unit(subject: Subject, comps: list[Comp],
             if 0 < per_unit <= cap:
                 return Derivation(round(per_unit, 2), "grouping", "article-method",
                                   f"{factor}: {hk:g}-count median ${hr:.0f} vs {lk:g}-count "
-                                  f"${lr:.0f}", "low")
+                                  f"${lr:.0f}", "low",
+                                  groups={"hi_count": hk, "hi_resid": round(hr),
+                                          "lo_count": lk, "lo_resid": round(lr),
+                                          "per_unit": round(per_unit, 2)})
 
     slope = linreg_slope([k for k, _ in known], [r for _, r in known])
     if slope is not None and 0 < slope <= cap:
         return Derivation(round(slope, 2), "regression", "article-method",
-                          f"slope of residual~{factor} over {len(known)} comps", "low")
+                          f"slope of residual~{factor} over {len(known)} comps", "low",
+                          regression={"n": len(known), "slope_per_unit": round(slope, 2)})
     return _none(f"{factor} signal too noisy/confounded to value reliably; not adjusted")
 
 
