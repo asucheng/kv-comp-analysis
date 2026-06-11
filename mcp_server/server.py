@@ -1,12 +1,13 @@
 from __future__ import annotations
+import hashlib
 import os
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Optional
 from mcp_server.models import (
     Subject, FindCompsResult, Estimate, CrossCheck, Criteria, AdjustmentRules, Overrides,
-    ReportPayload,
+    ReportComp, ReportPayload,
 )
 from mcp_server.compsource.base import CompSource, PropertyRecord
 from mcp_server.compsource.honestdoor import HonestDoorCompSource
@@ -33,6 +34,9 @@ class Tools:
     source: CompSource
     as_of: date
     geocoder: Optional[Geocoder] = None
+    # In-process handoff: estimate_value stashes {subject, comps, estimate} here under an
+    # id; render_report looks it up by id so the agent never re-emits the big payload.
+    _cache: dict = field(default_factory=dict)
 
     def get_subject(self, address: str, overrides: Optional[dict] = None) -> Subject:
         overrides = overrides or {}
@@ -92,8 +96,39 @@ class Tools:
                        ladder_depth: int = 0) -> Estimate:
         self._require(subject, ["sqft"])
         ov = Overrides(**overrides) if overrides else None
-        return reconcile(subject, comps, rules or AdjustmentRules(),
-                         as_of=self.as_of, ladder_depth=ladder_depth, overrides=ov)
+        est = reconcile(subject, comps, rules or AdjustmentRules(),
+                        as_of=self.as_of, ladder_depth=ladder_depth, overrides=ov)
+        # Cache the full bundle under a content-derived id and hand back only the id on the
+        # estimate. render_report rebuilds the report from the cache — the model passes the
+        # id, not ~170K tokens of estimate+comps it would otherwise have to re-serialize.
+        est.estimate_id = "est_" + hashlib.sha1(est.model_dump_json().encode()).hexdigest()[:8]
+        self._cache[est.estimate_id] = {
+            "subject": subject, "comps": list(comps), "estimate": est, "as_of": self.as_of}
+        return est
+
+    def render_from_estimate(self, estimate_id: str, *, confidence_reasoning: str = "",
+                             target_warnings: Optional[list] = None,
+                             verify_next: Optional[list] = None,
+                             exclusions: Optional[list] = None,
+                             out_dir: Optional[str] = None) -> str:
+        """Render the report from a cached estimate_id plus the agent's small narrative.
+
+        `exclusions` is a list of {"address", "reason"} to mark specific cached comps as
+        curated-out — the agent names the comp, not the whole comp set."""
+        bundle = self._cache.get(estimate_id)
+        if bundle is None:
+            raise ValueError(
+                f"Estimate '{estimate_id}' not found — its cached comps/estimate are gone "
+                "(server restarted, or estimate_value wasn't called this session). Re-run "
+                "estimate_value, then call render_report with the new estimate_id.")
+        excl = {e["address"]: e.get("reason") for e in (exclusions or [])}
+        comps = [ReportComp(comp=c, kept=c.address not in excl,
+                            exclude_reason=excl.get(c.address)) for c in bundle["comps"]]
+        payload = ReportPayload(
+            subject=bundle["subject"], comps=comps, estimate=bundle["estimate"],
+            confidence_reasoning=confidence_reasoning, target_warnings=target_warnings or [],
+            verify_next=verify_next or [], as_of=bundle["as_of"])
+        return self.render_report(payload, out_dir=out_dir)
 
     def cross_check(self, subject: Subject, estimate_point: float) -> CrossCheck:
         rec = self.source.get_property(subject.address)
@@ -187,7 +222,8 @@ def main() -> None:
         network. Each adjustment reports its method, evidence and confidence; Tier-2
         dimensions (age, location) come back as `disclosures`, not adjustments. Pass
         `overrides` (e.g. {"garage_value": 10000}) to replace a derived coefficient.
-        Takes comps from find_comps; pass the FULL comp set, not a display subset."""
+        Takes comps from find_comps; pass the FULL comp set, not a display subset.
+        Returns an `estimate_id` — pass THAT (not this whole object) to render_report."""
         r = AdjustmentRules(**rules) if rules else AdjustmentRules()
         from mcp_server.models import Comp
         cs = [Comp(**c) for c in comps]
@@ -203,16 +239,23 @@ def main() -> None:
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True,
                            "openWorldHint": False, "title": "Render HTML report"})
-    def render_report(payload: dict) -> dict:
-        """Render the self-contained, interactive HTML comp report to disk and return its
-        absolute path. Call this as the FINAL step, once the value is settled (address
-        confirmed, any overrides applied). `payload` carries: subject, comps (each
-        {comp, kept, exclude_reason}) including excluded ones, the full estimate object
-        from estimate_value (with coefficients), plus agent-authored confidence_reasoning,
-        target_warnings (subject-specific, shown first) and verify_next. Surface the
-        returned path and a file:// link so the user can open it in a browser."""
-        payload.setdefault("as_of", tools.as_of.isoformat())
-        return {"path": tools.render_report(ReportPayload(**payload))}
+    def render_report(estimate_id: str, confidence_reasoning: str = "",
+                      target_warnings: Optional[list] = None,
+                      verify_next: Optional[list] = None,
+                      exclusions: Optional[list] = None) -> dict:
+        """Render the self-contained, interactive HTML comp report to disk; return its
+        absolute path. Call this as the FINAL step, once the value is settled.
+
+        Pass ONLY the `estimate_id` returned by estimate_value (the server still holds the
+        subject, comps and full estimate for it) plus your small narrative — do NOT re-send
+        the estimate or comps. `confidence_reasoning`: your one-paragraph why. `target_warnings`:
+        subject-specific cautions, shown first. `verify_next`: what you'd check next.
+        `exclusions`: list of {"address","reason"} to curate specific comps out of the report.
+        Surface the returned path and a file:// link so the user can open it in a browser."""
+        return {"path": tools.render_from_estimate(
+            estimate_id, confidence_reasoning=confidence_reasoning,
+            target_warnings=target_warnings or [], verify_next=verify_next or [],
+            exclusions=exclusions or [])}
 
     mcp.run()  # stdio transport — local, no hosting
 

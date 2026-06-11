@@ -155,6 +155,48 @@ def test_render_report_writes_file(tmp_path):
     assert "<details" in open(path, encoding="utf-8").read()
 
 
+def test_estimate_value_returns_an_estimate_id():
+    # The id is the handle the agent passes to render_report instead of re-emitting the
+    # whole (huge) estimate object back through the model.
+    s = TOOLS.get_subject("123 Maple Dr, Calgary", overrides=SUBJECT_OVERRIDES)
+    est = TOOLS.estimate_value(s, TOOLS.find_comps(s).comps)
+    assert est.estimate_id and est.estimate_id.startswith("est_")
+
+
+def test_render_from_estimate_uses_cached_bundle(tmp_path):
+    # render_report must NOT need the estimate/comps re-passed: estimate_value cached the
+    # subject+comps+estimate under the id, so the agent passes only the id + its narrative.
+    import os
+    s = TOOLS.get_subject("123 Maple Dr, Calgary", overrides=SUBJECT_OVERRIDES)
+    est = TOOLS.estimate_value(s, TOOLS.find_comps(s).comps)
+    path = TOOLS.render_from_estimate(
+        est.estimate_id, confidence_reasoning="solid set", out_dir=str(tmp_path))
+    assert os.path.isabs(path) and os.path.exists(path)
+    html = open(path, encoding="utf-8").read()
+    assert "solid set" in html and "Comparable sales" in html
+
+
+def test_render_from_estimate_applies_exclusions(tmp_path):
+    # The agent can curate a comp out by passing just its address + reason (small),
+    # not the whole comp set.
+    s = TOOLS.get_subject("123 Maple Dr, Calgary", overrides=SUBJECT_OVERRIDES)
+    comps = TOOLS.find_comps(s).comps
+    est = TOOLS.estimate_value(s, comps)
+    drop = comps[0].address
+    path = TOOLS.render_from_estimate(
+        est.estimate_id, out_dir=str(tmp_path),
+        exclusions=[{"address": drop, "reason": "atypical lot"}])
+    html = open(path, encoding="utf-8").read()
+    assert "Excluded" in html and "atypical lot" in html
+
+
+def test_render_from_estimate_unknown_id_raises_clear_error(tmp_path):
+    with pytest.raises(ValueError) as exc:
+        TOOLS.render_from_estimate("est_deadbeef", out_dir=str(tmp_path))
+    msg = str(exc.value).lower()
+    assert "estimate" in msg and ("re-run" in msg or "rerun" in msg or "not found" in msg)
+
+
 def _report_payload():
     from datetime import date
     from mcp_server.models import Subject, Comp, AdjustmentRules, ReportComp, ReportPayload
