@@ -1,0 +1,12 @@
+[
+  {"address": "138 Cranberry Place SE Calgary",     "label": "detached / suburban / 2007 / 1-gar"},
+  {"address": "301 - 1500 7 Street SW Calgary",     "label": "condo / downtown / underground"},
+  {"address": "2028 41 Avenue SW Calgary",          "label": "detached infill / large / 3-gar"},
+  {"address": "2319 24 Avenue SW Calgary",          "label": "semi / Killarney / 2-gar"},
+  {"address": "2925 17 Street SW Calgary",          "label": "townhouse / Marda Loop / 2-gar"},
+  {"address": "7132 36 Avenue NW Calgary",          "label": "detached / Bowness / 1978 / no garage"},
+  {"address": "4635 79 Street NW Calgary",          "label": "semi / Bowness / 2-gar"},
+  {"address": "205 - 4512 75 Street NW Calgary",    "label": "condo / Bowness / old / low-value"},
+  {"address": "1419 10 Street SW Calgary",          "label": "townhouse / Beltline / 1989 / 1-gar"},
+  {"address": "61 Auburn Meadows View SE Calgary",  "label": "semi / Auburn Bay / no garage (pad)"}
+]

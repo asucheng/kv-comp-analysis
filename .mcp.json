@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "kv-comp-analysis": {
+      "type": "stdio",
+      "command": "/home/allen/Documents/KV_hackathon/.venv/bin/kv-comp-analysis",
+      "args": []
+    }
+  }
+}
