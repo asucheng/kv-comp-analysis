@@ -43,6 +43,27 @@ def linreg_slope(xs: list[float], ys: list[float]) -> Optional[float]:
 # it does NOT drop legitimate negative-slope noise, which must stay so the median is unbiased.
 _PPSF_CLAMP = 1000.0
 
+# Matched pairs hold features constant to isolate one variable. We do that STRICTLY first
+# (every attribute known on both comps and equal — an unknown drops the pair), and only relax
+# to null-safe (unknowns tolerated) when strict yields too few pairs to derive from. Same rule
+# for time, size and features; confidence is left to the dispersion-based logic, not adjusted
+# for relaxing.
+_FEATS = ("beds", "baths", "garage", "property_type")
+_MIN_STRICT_PAIRS = 3
+
+
+def _features_match(a: Comp, b: Comp, attrs: tuple[str, ...], *, strict: bool) -> bool:
+    """strict: each attr must be KNOWN on both comps and equal (an unknown drops the pair).
+    null-safe: an attr disqualifies only if known on both and differing (unknowns tolerated)."""
+    for f in attrs:
+        va, vb = getattr(a, f), getattr(b, f)
+        if strict:
+            if va is None or vb is None or va != vb:
+                return False
+        elif va is not None and vb is not None and va != vb:
+            return False
+    return True
+
 
 def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date) -> Derivation:
     """Market %/month, measured on SIZE-CONTROLLED data so a size-imbalanced comp set
@@ -62,29 +83,36 @@ def derive_time_trend(subject: Subject, comps: list[Comp], *, as_of: date) -> De
     # in through $/sqft. This mirrors the size/feature derivations, which also isolate one
     # variable by holding the others identical.
     SIZE_TOL = 0.05
-    rates: list[float] = []
-    pairs: list[PairTrace] = []
-    for i in range(n):
-        for j in range(i + 1, n):
-            a, b = comps[i], comps[j]
-            big = max(a.sqft, b.sqft)
-            if big == 0 or abs(a.sqft - b.sqft) / big > SIZE_TOL:
-                continue
-            if (a.beds, a.baths, a.garage, a.property_type) != (b.beds, b.baths, b.garage, b.property_type):
-                continue
-            mi, mj = months[i], months[j]
-            if mi == mj:
-                continue
-            (older, om), (recent, rm) = ((a, mi), (b, mj)) if mi > mj else ((b, mj), (a, mi))
-            op, rp = older.price_per_sqft, recent.price_per_sqft
-            if op <= 0:
-                continue
-            rate = ((rp - op) / op) / (om - rm)
-            rates.append(rate)
-            pairs.append(PairTrace(
-                comp_a=recent.address, comp_b=older.address,
-                detail=f"${rp:.0f}/sqft ({rm:.0f} mo) vs ${op:.0f}/sqft ({om:.0f} mo), {om-rm:.0f} mo apart",
-                value=round(rate, 5)))
+
+    def collect(strict: bool):
+        rates: list[float] = []
+        pairs: list[PairTrace] = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                a, b = comps[i], comps[j]
+                big = max(a.sqft, b.sqft)
+                if big == 0 or abs(a.sqft - b.sqft) / big > SIZE_TOL:
+                    continue
+                if not _features_match(a, b, _FEATS, strict=strict):
+                    continue
+                mi, mj = months[i], months[j]
+                if mi == mj:
+                    continue
+                (older, om), (recent, rm) = ((a, mi), (b, mj)) if mi > mj else ((b, mj), (a, mi))
+                op, rp = older.price_per_sqft, recent.price_per_sqft
+                if op <= 0:
+                    continue
+                r = ((rp - op) / op) / (om - rm)
+                rates.append(r)
+                pairs.append(PairTrace(
+                    comp_a=recent.address, comp_b=older.address,
+                    detail=f"${rp:.0f}/sqft ({rm:.0f} mo) vs ${op:.0f}/sqft ({om:.0f} mo), {om-rm:.0f} mo apart",
+                    value=round(r, 5)))
+        return rates, pairs
+
+    rates, pairs = collect(strict=True)
+    if len(rates) < _MIN_STRICT_PAIRS:        # too few clean pairs -> tolerate unknown attrs
+        rates, pairs = collect(strict=False)
     if rates:
         # No clamp: the median of feature-matched pairs IS the market rate — clamping it would
         # hide a genuinely hot (or cold) market. Thin/noisy data is surfaced via confidence,
@@ -136,23 +164,30 @@ def _matched_pair_ppsf(subject: Subject, comps: list[Comp], prices: list[float])
     signs without trimming the legitimate negative noise that keeps the median unbiased.
     Positivity is asserted on the FINAL median, not per pair."""
     n = len(comps)
-    rates: list[float] = []
-    pairs: list[PairTrace] = []
-    for i in range(n):
-        for j in range(i + 1, n):
-            a, b = comps[i], comps[j]
-            dsqft = a.sqft - b.sqft
-            if dsqft == 0:                 # no size signal / divide-by-zero
-                continue
-            if (a.beds, a.baths, a.garage, a.property_type) != (b.beds, b.baths, b.garage, b.property_type):
-                continue
-            rate = (prices[i] - prices[j]) / dsqft
-            if abs(rate) < _PPSF_CLAMP:    # two-sided: drop only the meaningless explosions
-                rates.append(rate)
-                pairs.append(PairTrace(
-                    comp_a=a.address, comp_b=b.address,
-                    detail=f"Δ${abs(prices[i]-prices[j]):,.0f} over {abs(dsqft):,.0f} sqft",
-                    value=round(rate, 2)))
+
+    def collect(strict: bool):
+        rates: list[float] = []
+        pairs: list[PairTrace] = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                a, b = comps[i], comps[j]
+                dsqft = a.sqft - b.sqft
+                if dsqft == 0:                 # no size signal / divide-by-zero
+                    continue
+                if not _features_match(a, b, _FEATS, strict=strict):
+                    continue
+                r = (prices[i] - prices[j]) / dsqft
+                if abs(r) < _PPSF_CLAMP:        # two-sided: drop only the meaningless explosions
+                    rates.append(r)
+                    pairs.append(PairTrace(
+                        comp_a=a.address, comp_b=b.address,
+                        detail=f"Δ${abs(prices[i]-prices[j]):,.0f} over {abs(dsqft):,.0f} sqft",
+                        value=round(r, 2)))
+        return rates, pairs
+
+    rates, pairs = collect(strict=True)
+    if len(rates) < _MIN_STRICT_PAIRS:
+        rates, pairs = collect(strict=False)
     if rates:
         rate = median(rates)
         if 0 < rate < _PPSF_CLAMP:         # size adds positive value — checked on the AGGREGATE
@@ -204,23 +239,15 @@ def derive_marginal_ppsf(subject: Subject, comps: list[Comp], prices: list[float
 _FEATURE_CAP = {"beds": 80_000.0, "baths": 40_000.0, "garage": 40_000.0}
 
 
-def _alike_except(a: Comp, b: Comp, factor: str) -> bool:
-    """True if two comps are comparable on everything EXCEPT `factor`: size within 10%,
-    same property type, and the OTHER count features equal. Null-safe (an unknown
-    attribute never disqualifies a pair). This isolates `factor` so the price gap
-    reflects it alone, not the size/quality that correlates with feature counts."""
+def _alike_except(a: Comp, b: Comp, factor: str, *, strict: bool) -> bool:
+    """True if two comps are comparable on everything EXCEPT `factor`: size within 10% and the
+    OTHER features (the other counts + property_type) match per `strict`. This isolates `factor`
+    so the price gap reflects it alone, not the size/quality that correlates with feature counts."""
     big = max(a.sqft, b.sqft)
     if big == 0 or abs(a.sqft - b.sqft) / big > 0.10:
         return False
-    if a.property_type and b.property_type and a.property_type != b.property_type:
-        return False
-    for other in ("beds", "baths", "garage"):
-        if other == factor:
-            continue
-        va, vb = getattr(a, other), getattr(b, other)
-        if va is not None and vb is not None and va != vb:
-            return False
-    return True
+    others = tuple(f for f in _FEATS if f != factor)
+    return _features_match(a, b, others, strict=strict)
 
 
 def derive_feature_unit(subject: Subject, comps: list[Comp],
@@ -235,23 +262,31 @@ def derive_feature_unit(subject: Subject, comps: list[Comp],
     if len(known) < 2 or len(counts) < 2:
         return _none(f"no {factor} variation across comps; not adjusted")
 
-    # Rung 1: matched pairs — control for the confounds by selection, value ONE unit.
+    # Rung 1: matched pairs — control for the confounds by selection, value ONE unit. Δcount is
+    # an integer ≥1, so there is no near-zero-denominator explosion: keep every pair (both signs)
+    # and let the sanity cap apply to the FINAL median.
     n = len(comps)
-    rates: list[float] = []
-    pairs: list[PairTrace] = []
-    for i in range(n):
-        for j in range(i + 1, n):
-            fa, fb = getattr(comps[i], factor), getattr(comps[j], factor)
-            if fa is None or fb is None or fa == fb or not _alike_except(comps[i], comps[j], factor):
-                continue
-            # Δcount is an integer ≥1, so there is no near-zero-denominator explosion here:
-            # keep every pair (both signs) and let the sanity cap apply to the FINAL median.
-            rate = (residuals[i] - residuals[j]) / (fa - fb)
-            rates.append(rate)
-            pairs.append(PairTrace(
-                comp_a=comps[i].address, comp_b=comps[j].address,
-                detail=f"Δresidual ${abs(residuals[i]-residuals[j]):,.0f} over {abs(fa-fb):g} {factor}",
-                value=round(rate, 2)))
+
+    def collect(strict: bool):
+        rates: list[float] = []
+        pairs: list[PairTrace] = []
+        for i in range(n):
+            for j in range(i + 1, n):
+                fa, fb = getattr(comps[i], factor), getattr(comps[j], factor)
+                if (fa is None or fb is None or fa == fb
+                        or not _alike_except(comps[i], comps[j], factor, strict=strict)):
+                    continue
+                r = (residuals[i] - residuals[j]) / (fa - fb)
+                rates.append(r)
+                pairs.append(PairTrace(
+                    comp_a=comps[i].address, comp_b=comps[j].address,
+                    detail=f"Δresidual ${abs(residuals[i]-residuals[j]):,.0f} over {abs(fa-fb):g} {factor}",
+                    value=round(r, 2)))
+        return rates, pairs
+
+    rates, pairs = collect(strict=True)
+    if len(rates) < _MIN_STRICT_PAIRS:
+        rates, pairs = collect(strict=False)
     if rates:
         per_unit = median(rates)
         if 0 < per_unit <= cap:            # positive & plausible — asserted on the AGGREGATE

@@ -232,6 +232,65 @@ def test_feature_unit_keeps_negative_pair_two_sided():
     assert dv.value > 0                                # final median positive & within cap
 
 
+def _c(price, sqft, addr, *, beds=3, baths=2, garage=2, d=date(2026, 5, 1)):
+    # property_type is always known here so the STRICT path can fire on the known attributes;
+    # the unknown axis under test is passed explicitly (garage=None / baths=None).
+    return Comp(address=addr, lat=51.05, lng=-114.08, sold_price=price, sold_date=d,
+                sqft=sqft, year_built=1985, beds=beds, baths=baths, garage=garage,
+                property_type="detached")
+
+
+def test_size_strict_drops_two_unknowns():
+    # Two comps both with unknown garage must NOT pair as "matching" when strict pairs are
+    # plentiful (the old tuple compare wrongly treated None == None as equal).
+    s = _subject(sqft=1500)
+    comps = [_c(500_000, 1400, "k1"), _c(520_000, 1500, "k2"), _c(540_000, 1600, "k3"),
+             _c(505_000, 1450, "u1", garage=None), _c(545_000, 1650, "u2", garage=None)]
+    dv = derive_marginal_ppsf(s, comps, [c.sold_price for c in comps])
+    assert dv.method == "matched_pair"
+    pair_sets = [{p.comp_a, p.comp_b} for p in dv.pairs]
+    assert {"u1", "u2"} not in pair_sets          # two-unknown pair dropped under strict
+
+
+def test_size_relaxes_to_nullsafe_when_strict_sparse():
+    # Only ONE all-known feature-identical pair exists (<3), so it relaxes to null-safe and
+    # forms an unknown-vs-known pair it would otherwise drop.
+    s = _subject(sqft=1500)
+    comps = [_c(500_000, 1400, "k1"), _c(540_000, 1600, "k2"),
+             _c(520_000, 1500, "u1", garage=None), _c(560_000, 1700, "u2", garage=None)]
+    dv = derive_marginal_ppsf(s, comps, [c.sold_price for c in comps])
+    assert dv.method == "matched_pair"
+    pair_sets = [{p.comp_a, p.comp_b} for p in dv.pairs]
+    assert {"k1", "u1"} in pair_sets              # unknown-vs-known pair formed only by relaxing
+
+
+def test_time_trend_relaxes_to_nullsafe_when_strict_sparse():
+    # Same strict-then-relax rule on time pairs: one strict pair (<3) -> relax -> a one-sided
+    # unknown-garage pair forms.
+    s = _subject(sqft=2000)
+    comps = [_c(800_000, 2000, "ko", d=date(2025, 12, 1)), _c(860_000, 2000, "kr", d=date(2026, 6, 1)),
+             _c(804_000, 2000, "uo", garage=None, d=date(2025, 12, 1)),
+             _c(862_000, 2000, "ur", garage=None, d=date(2026, 6, 1))]
+    dv = derive_time_trend(s, comps, as_of=AS_OF)
+    assert dv.method == "matched_pair"
+    pair_sets = [{p.comp_a, p.comp_b} for p in dv.pairs]
+    assert {"ko", "ur"} in pair_sets or {"kr", "uo"} in pair_sets
+
+
+def test_feature_unit_strict_drops_unknown_when_pairs_plentiful():
+    # Features now go strict-first too: with >=3 all-known garage pairs, comps with unknown
+    # baths are dropped (was always null-safe before, so they used to be included).
+    s = _subject(garage=2)
+    comps = [_c(0, 1500, "a", garage=1), _c(0, 1500, "b", garage=2),
+             _c(0, 1500, "e", garage=1), _c(0, 1500, "f", garage=2),
+             _c(0, 1500, "c", garage=1, baths=None), _c(0, 1500, "d", garage=2, baths=None)]
+    residuals = [100_000, 115_000, 101_000, 116_000, 103_000, 118_000]
+    dv = derive_feature_unit(s, comps, residuals, "garage")
+    assert dv.method == "matched_pair"
+    addrs = {p.comp_a for p in dv.pairs} | {p.comp_b for p in dv.pairs}
+    assert "c" not in addrs and "d" not in addrs  # unknown-baths comps dropped under strict
+
+
 def test_marginal_ppsf_uses_median_of_all_pairs_with_traces():
     s = _subject(sqft=1800)
     # three matched pairs alike except size (>=8% apart), implying ~$50-60/sqft
