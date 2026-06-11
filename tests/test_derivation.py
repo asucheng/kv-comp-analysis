@@ -157,3 +157,17 @@ def test_time_trend_emits_pair_traces():
     assert dv.method == "matched_pair"
     assert len(dv.pairs) >= 1
     assert dv.pairs[0].comp_a and dv.pairs[0].comp_b
+
+
+def test_marginal_ppsf_uses_median_of_all_pairs_with_traces():
+    s = _subject(sqft=1800)
+    # three matched pairs alike except size (>=8% apart), implying ~$50-60/sqft
+    comps = [_comp(700_000, sqft=1800, addr="a"), _comp(710_000, sqft=2000, addr="b"),
+             _comp(702_000, sqft=1800, addr="c"), _comp(715_000, sqft=2000, addr="d"),
+             _comp(704_000, sqft=1800, addr="e"), _comp(719_000, sqft=2000, addr="f")]
+    prices = [c.sold_price for c in comps]
+    dv = derive_marginal_ppsf(s, comps, prices)
+    assert dv.method == "matched_pair"
+    assert len(dv.pairs) >= 3          # all qualifying pairs recorded, not just the first
+    from statistics import median
+    assert dv.value == round(median([p.value for p in dv.pairs]), 2)
