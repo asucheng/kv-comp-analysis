@@ -34,7 +34,7 @@ def test_slug():
 def test_render_has_all_sections_and_value():
     html = render_report_html(_payload())
     for token in ["138 Cranberry Place SE", "Baseline", "Confidence", "Comparable",
-                  "Adjustment", "Disclosure", "Not in this number", "What I'd verify next"]:
+                  "Adjustment", "Warnings", "Disclosure", "What I'd verify next"]:
         assert token in html
 
 
@@ -49,6 +49,37 @@ def test_render_is_self_contained_no_external_refs():
     html = render_report_html(_payload())
     assert "src=" not in html and "http://" not in html and "https://" not in html
     assert "<details" in html  # interactive tiles present
+
+
+def test_report_omits_not_in_this_number():
+    # "Not in this number" duplicated the "Baseline value only" project warning — removed.
+    assert "Not in this number" not in render_report_html(_payload())
+
+
+def test_adjustment_tiles_are_single_column():
+    # Multi-column grid crammed the expanded table; single column gives it room.
+    html = render_report_html(_payload())
+    assert "minmax(240px" not in html
+    assert "grid-template-columns:1fr" in html
+
+
+def test_size_tile_labels_marginal_per_sqft():
+    html = render_report_html(_payload())
+    assert "/sqft (marginal)" in html
+
+
+def test_adjustment_tiles_carry_descriptions():
+    # each tile explains what it measures / how / limit, not just numbers
+    html = render_report_html(_payload())
+    assert "marginal value of one extra square foot" in html  # size description
+    assert "class='desc'" in html
+
+
+def test_warnings_render_between_adjustments_and_disclosures():
+    html = render_report_html(_payload())
+    assert (html.index("<h2>Adjustments</h2>")
+            < html.index("<h2>Warnings</h2>")
+            < html.index("<h2>Disclosures</h2>"))
 
 
 def test_render_shows_grouping_evidence_in_tiles():
