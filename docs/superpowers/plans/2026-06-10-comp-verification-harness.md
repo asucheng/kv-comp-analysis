@@ -222,7 +222,7 @@ def test_grade_pass_within_tolerance():
 
 
 def test_grade_fail_when_beyond_tolerance():
-    v = grade("a", "lbl", _ok(1_780_000), 2_130_800, "x")  # ~ -16%
+    v = grade("a", "lbl", _ok(1_780_000), 2_130_800)  # ~ -16%; omit avm_resolved -> delta path
     assert v.verdict == "FAIL" and v.delta_pct < -0.10
 
 
