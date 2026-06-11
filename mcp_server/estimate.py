@@ -60,7 +60,8 @@ def _coeff(factor: str, dv: Derivation, *, is_pct: bool, unit: Optional[str] = N
         if is_pct:
             equation = "monthly % = median over size-matched pairs of ((p_recent − p_older)/p_older) / Δmonths"
         elif unit:
-            equation = f"per-{unit} $ = median over pairs alike except {factor} of Δresidual / Δcount"
+            equation = (f"per-{unit} $ = median of Δresidual / Δ{factor} over pairs alike except "
+                        f"{factor} (same other features, size within 10%)")
         else:
             equation = "per-sqft $ = median over matched pairs of Δprice / Δsqft"
     elif dv.method == "grouping":
