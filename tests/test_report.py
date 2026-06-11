@@ -55,3 +55,19 @@ def test_render_shows_pair_traces_in_tiles():
     html = render_report_html(_payload())
     assert "Δ" in html  # arithmetic detail rendered
     assert "median of" in html  # aggregate line rendered
+
+
+def test_render_excluded_reason_present():
+    assert "lakefront outlier" in render_report_html(_payload())
+
+
+def test_render_collapses_comps_beyond_ten():
+    from datetime import date
+    p = _payload()
+    base = p.comps[0].comp
+    # pad to 12 kept comps so the "show more" collapse triggers
+    extra = [ReportComp(comp=base.model_copy(update={"address": f"extra {i}", "distance_km": 1.0 + i}))
+             for i in range(9)]
+    p.comps = [c for c in p.comps if c.kept] + extra + [c for c in p.comps if not c.kept]
+    html = render_report_html(p)
+    assert "more comps" in html  # collapse summary present

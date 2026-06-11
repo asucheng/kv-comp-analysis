@@ -81,7 +81,7 @@ def _comps_section(comps) -> str:
     kept = [rc for rc in comps if rc.kept]
     kept.sort(key=lambda rc: (rc.comp.distance_km is None, rc.comp.distance_km or 0))
     excluded = [rc for rc in comps if not rc.kept]
-    head = ("<thead><tr><th>Address</th><th>Sold</th><th>Date</th><th>Sqft</th>"
+    head = ("<thead><tr><th>Address</th><th>Sold $</th><th>Date</th><th>Sqft</th>"
             "<th>$/sqft</th><th>Dist</th><th>Why included</th></tr></thead>")
     top = "".join(_comp_row(rc) for rc in kept[:10])
     out = [f"<section><h2>Comparable sales</h2>"
@@ -97,7 +97,7 @@ def _comps_section(comps) -> str:
             f"<td>${rc.comp.price_per_sqft:,.0f}</td><td>{_esc(rc.exclude_reason or '')}</td></tr>"
             for rc in excluded)
         out.append(f"<details><summary>Excluded ({len(excluded)})</summary>"
-                   f"<table class='comps'><thead><tr><th>Address</th><th>Sold</th>"
+                   f"<table class='comps'><thead><tr><th>Address</th><th>Sold $</th>"
                    f"<th>$/sqft</th><th>Reason excluded</th></tr></thead>"
                    f"<tbody>{exrows}</tbody></table></details>")
     return "".join(out) + "</section>"
@@ -167,10 +167,7 @@ def _list_section(title: str, items: list[str]) -> str:
     if not items:
         return ""
     lis = "".join(f"<li>{_esc(x)}</li>" for x in items)
-    # title is trusted developer-supplied text; escape only special HTML chars that
-    # would break markup, but preserve apostrophes so test tokens match verbatim.
-    safe_title = title.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    return f"<section><h2>{safe_title}</h2><ul>{lis}</ul></section>"
+    return f"<section><h2>{html.escape(title, quote=False)}</h2><ul>{lis}</ul></section>"
 
 
 _CSS = """
