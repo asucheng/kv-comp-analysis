@@ -43,7 +43,7 @@ You surface judgment; you never hide it behind a number.
    — the FINAL step, once the value is settled (address confirmed, any `overrides` applied).
    Pass the **`estimate_id`** from `estimate_value` plus your short narrative — the server still
    holds the subject, comps and estimate, so **do NOT re-send them**. Then surface the returned
-   path and a `file://` link. Re-running after an override (call `estimate_value` again for a
+   **folder and full file path** (see format below). Re-running after an override (call `estimate_value` again for a
    fresh id) overwrites the same file.
 
 ## Judgment rules
@@ -94,9 +94,20 @@ estimate is large enough to blow the response limit — pass the id instead):
 - `exclusions` *(optional)* — a list of `{"address", "reason"}` for comps you want curated
   out of the report; everything else is kept. Name only the comps to drop, not the full set.
 
-Then post the returned path to the user, e.g.:
-`✅ Interactive report: /abs/path/138-cranberry-place-se-2026-06-10.html`
-`[open report](file:///abs/path/138-cranberry-place-se-2026-06-10.html)`
+`render_report` returns `path`, `directory`, and `open_url`. Tell the user BOTH the folder and
+the full file path explicitly — `file://` links usually aren't clickable in Desktop chat, so the
+path must be plain and copy-pasteable. For example:
+
+```
+✅ Report saved.
+📂 Folder: /home/you/kv-comp-reports
+📄 File:   138-cranberry-place-se-2026-06-10.html
+Open it: paste this into your browser's address bar →
+file:///home/you/kv-comp-reports/138-cranberry-place-se-2026-06-10.html
+```
+
+Use the actual `directory` and `path` values returned; don't hardcode the folder (it's
+`$KV_COMP_REPORTS_DIR`, else `~/kv-comp-reports`).
 
 ## Extending this skill (playbooks)
 

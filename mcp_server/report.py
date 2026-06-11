@@ -5,6 +5,28 @@ from mcp_server.models import ReportPayload, CoefficientTrace, Estimate, Subject
 
 CONF_COLOR = {"high": "#1a7f37", "medium": "#9a6700", "low": "#b42318"}
 
+# Per-unit label shown next to each coefficient's headline value.
+_UNIT_LABEL = {"size": "/sqft (marginal)", "beds": "/bed", "baths": "/bath", "garage": "/garage"}
+
+# Plain-language "what it measures / how / limit" for each adjustment, shown atop its tile.
+_FACTOR_DESC = {
+    "time": "How fast prices moved per month — from pairs of otherwise-identical homes sold on "
+            "different dates. Uses the median (robust to one-off sales) and is not capped, so a "
+            "genuinely hot or cold market shows through; thin data lowers confidence instead.",
+    "size": "The marginal value of one extra square foot — the slope of price vs. size with the "
+            "fixed base value (lot, kitchen) removed, so it sits well below the raw $/sqft. From "
+            "feature-identical pairs differing in size; measured locally because the curve is concave.",
+    "beds": "The value of one more bedroom — from pairs identical except bedroom count and within "
+            "10% size, measured on the price after time and size are removed. Capped to reject a "
+            "value confounded by size or quality.",
+    "baths": "The value of one more bathroom — from pairs identical except bath count and within "
+             "10% size, measured on the price after time and size are removed. Capped to reject a "
+             "value confounded by size or quality.",
+    "garage": "The value of one more garage space — from pairs identical except garage count and "
+              "within 10% size, measured on the price after time and size are removed. Capped to "
+              "reject a value confounded by size or quality.",
+}
+
 # Project-level disclaimers — identical every run, so they live here, not in the payload.
 PROJECT_WARNINGS = [
     ("Baseline value only",
@@ -138,9 +160,11 @@ def _coeff_tile(c: CoefficientTrace, per_comp) -> str:
     elif c.is_pct:
         val = f"{c.value*100:+.3f}%/mo"
     else:
-        val = f"${c.value:,.0f}"
+        val = f"${c.value:,.0f}{_UNIT_LABEL.get(c.factor, '')}"
     chip = f"<span class='chip {_esc(c.confidence)}'>{_esc(c.confidence)}</span>"
-    body = (f"<p class='eq'>{_esc(c.equation)}</p>{_trace_table(c)}"
+    desc = _FACTOR_DESC.get(c.factor, "")
+    desc_html = f"<p class='desc'>{_esc(desc)}</p>" if desc else ""
+    body = (f"{desc_html}<p class='eq'>{_esc(c.equation)}</p>{_trace_table(c)}"
             f"<p class='agg'>{_esc(c.aggregate)}</p>{_applied_table(c.factor, per_comp)}")
     return (f"<details class='tile'><summary><span class='factor'>{_esc(c.factor)}</span>"
             f"<span class='val'>{_esc(val)}</span><span class='method'>{_esc(c.method)}</span>"
@@ -192,7 +216,8 @@ table.kv th{width:130px;color:var(--muted);font-weight:500}.prov{color:var(--mut
 .warnings .warn{border-radius:9px;padding:11px 14px;margin:8px 0;font-size:13px}
 .warn.target{background:#fff4ed;border:1px solid #f9b98a;color:#8a3b12}
 .warn.project{background:#eef4fb;border:1px solid #c5d9ef;color:#234a73}
-.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px}
+.tiles{display:grid;grid-template-columns:1fr;gap:10px}
+.desc{font-size:13px;color:#475467;margin:2px 0 12px;line-height:1.5}
 details.tile{border:1px solid var(--line);border-radius:10px;background:#fafbfc;overflow:hidden}
 details.tile>summary{list-style:none;cursor:pointer;padding:12px 14px;display:flex;
 flex-wrap:wrap;align-items:center;gap:8px}
@@ -230,16 +255,12 @@ def render_report_html(payload: ReportPayload) -> str:
             f"<p class='muted'>{_esc(drivers)}</p></section>")
     body = "".join([
         hero,
-        _warnings_section(payload.target_warnings),
         _subject_section(s),
         conf,
         _comps_section(payload.comps),
         _adjustments_section(est),
+        _warnings_section(payload.target_warnings),
         _disclosures_section(est),
-        _list_section("Not in this number", [
-            "Condition, rehab and deferred maintenance are out of scope.",
-            "Mark the baseline down for repairs, or up for recent renovation, before use.",
-        ]),
         _list_section("What I'd verify next", payload.verify_next),
         f"<footer>Source: HonestDoor sold history (~180-day window). "
         f"Generated {_esc(payload.as_of)}. Scope: AB / BC, calibrated on Calgary.</footer>",

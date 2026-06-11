@@ -251,11 +251,13 @@ def main() -> None:
         the estimate or comps. `confidence_reasoning`: your one-paragraph why. `target_warnings`:
         subject-specific cautions, shown first. `verify_next`: what you'd check next.
         `exclusions`: list of {"address","reason"} to curate specific comps out of the report.
-        Surface the returned path and a file:// link so the user can open it in a browser."""
-        return {"path": tools.render_from_estimate(
+        Tell the user the FOLDER and the full file path explicitly (file:// links usually aren't
+        clickable in Desktop chat, so the path must be copy-pasteable)."""
+        path = tools.render_from_estimate(
             estimate_id, confidence_reasoning=confidence_reasoning,
             target_warnings=target_warnings or [], verify_next=verify_next or [],
-            exclusions=exclusions or [])}
+            exclusions=exclusions or [])
+        return {"path": path, "directory": os.path.dirname(path), "open_url": "file://" + path}
 
     mcp.run()  # stdio transport — local, no hosting
 
