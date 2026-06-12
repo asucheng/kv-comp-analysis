@@ -3,7 +3,12 @@
 A local MCP server + a `comp-analysis` Skill that turns Claude Desktop into a residential
 comp-analysis assistant for the Calgary market: given a subject property, it finds
 comparable recent sales (KV's house rules), adjusts them, and produces a transparent,
-underwriter-style value estimate 
+underwriter-style value estimate.
+
+## Demo
+▶️ **[Watch the demo (Loom)](https://www.loom.com/share/45fb2ab163af4a1cb2ffa856384590e9)** — a
+full run in Claude Desktop: enter an address, find comps under KV's house rules, derive the
+adjustments, and open the interactive HTML report.
 
 ## The problem
 When a home builder borrows from KV Capital, KV — the lender — needs to know **how much the
