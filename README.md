@@ -5,11 +5,70 @@ comp-analysis assistant for the Calgary market: given a subject property, it fin
 comparable recent sales (KV's house rules), adjusts them, and produces a transparent,
 underwriter-style value estimate — and can learn each underwriter's own methods.
 
-## Why this shape
-- **Augments an existing workflow** (Claude Desktop) — no new app to adopt.
-- **Deterministic tools + judgment Skill:** four neutral read-only MCP tools do the
-  mechanics; the Skill carries the underwriter methodology and orchestration.
-- **Expandable:** underwriters teach it new methods via playbooks ("make my way into a skill").
+## The problem
+When a home builder borrows from KV Capital, KV — the lender — needs to know **how much the
+project is really worth** before lending against it. Establishing that value is the job of
+**underwriting**, and within underwriting the most time-consuming step is **finding comparable
+sales (comps)** and reasoning from them. This project uses AI to take that bottleneck off the
+underwriter's desk — not to replace their judgment, but to do the legwork and lay the evidence
+out for them.
+
+The data fights you, too: Alberta sold prices are confidential on MLS, the DDF API needs a
+REALTOR® membership, Zillow doesn't operate in Canada, and municipal assessments are
+*valuations, not sales* (and lack sqft/beds/baths). So sourcing real, attributed sold data is
+itself part of the problem.
+
+## Approach
+Most valuation tools on the internet hand back a single estimated number and quietly ask you
+to trust it. **This one shows its work.** It doesn't just produce a baseline value — it walks
+through *how* it got there: which comps it used, why those, and how the comps themselves imply
+each adjustment across **time, size, and features**. The underwriter sees the reasoning, not a
+black box, and can challenge any of it.
+
+**It lives where the underwriter already works — Claude Desktop.** No new app, web platform, or
+system to learn: the project ships as an **MCP server + a Skill** installed into Claude Desktop.
+The underwriter prompts Claude with a target address; Claude resolves the property, finds the
+comps, derives the adjustments, and estimates the value. If the fetched property details are
+wrong — or missing, as with new construction — the user **overrides** them inline before the
+analysis runs. At the end, Claude returns a **link to a self-contained HTML report**: paste it
+into a browser to explore every comp and every adjustment, with the evidence and arithmetic
+behind the baseline value.
+
+The comp-selection rules come from **Sam**, a KV underwriter — radius, size, recency, and age
+bands plus a secondary match — encoded as the tool defaults the agent applies (and an
+underwriter can override).
+
+**How it handles the hard parts:**
+
+- **Real, attributed data.** Comps come from **HonestDoor's public GraphQL backend** (real sold
+  price + date sourced from Land Titles, plus living area / beds / baths / year). The headline
+  HonestDoor figure is an **AVM estimate, not a sale** — only Sold History counts as a real
+  transaction.
+- **Fuzzy subject resolution.** Address search returns ranked guesses and never flags an exact
+  match, so the agent **confirms the resolved address with the user before valuing** and offers
+  alternates when the top hit looks off — a fuzzy neighbour never silently drives a valuation.
+- **Adjustments derived from the comps, not invented.** A **two-tier** method: *quantifiable*
+  factors (time, size, beds, full/half baths, garage) are **dollar-adjusted with magnitudes
+  read from the comp set** via named appraisal methods — **matched pairs → grouping →
+  regression**, strongest first — each tagged whether it came from the **cited source** or
+  **our own judgment**; *bracketed* factors (age, location) are filtered but **not adjusted**,
+  with the comp set's imbalance **disclosed** as a directional caveat instead.
+- **Sparse or noisy comp sets.** When comps are thin, a **widening ladder** relaxes one rule at
+  a time (time → radius → size → age), logs each relaxation, and lowers confidence accordingly.
+  Implausible or confounded derivations are rejected by **plausibility caps** so the report
+  shows an honest "not adjusted" rather than a fabricated number, and outliers are trimmed
+  before reconciliation.
+- **Explainable confidence, no borrowed anchors.** The high/medium/low rating is computed from
+  *our own* data quality (comp count, $/sqft dispersion, ladder depth, method strength), and the
+  AVM/assessment cross-check is deliberately kept **out of the valuation** so the conclusion
+  never leans on someone else's estimate.
+- **Tested, not just demoed.** A **blind golden-set regression harness** reruns the full Desktop
+  experience over fixed Calgary addresses in Claude Code and grades each result against the AVM
+  *after* the agent has answered — catching regressions without manual Desktop checks.
+
+**Expandable:** when an underwriter teaches it a better method, the Skill captures it as a
+reusable *playbook* ("make my way into a skill") — raising the ceiling for every future run
+without new code. See **Data & honesty** below for the data source and how provenance is kept.
 
 ## Data & honesty
 Alberta sold prices are confidential on MLS, and municipal assessments lack sqft/beds/baths
@@ -147,8 +206,28 @@ pytest -q
 ```
 
 ## Scope
-v1: residential, Calgary-validated. Subject **search** (`getMultiSearch`) is nationwide, so
-addresses anywhere in Canada resolve; **comp coverage**, however, varies by region (Alberta/BC
-strong, Ontario sparse) and accuracy is validated only for Calgary — where there are no comps,
-the agent says so. Documented extensions: per-market comp validation, commercial, real SOLD
-feeds via `CompSource`. See `docs/superpowers/specs/2026-06-06-kv-comp-analysis-design.md`.
+- **Residential property only** — single-family and attached homes. Commercial and
+  multi-family are out of scope (documented extensions).
+- **Best in Alberta & BC.** Subject *search* is nationwide, so any Canadian address resolves —
+  but **comp coverage** is strongest in **AB/BC** and sparse elsewhere (e.g. Ontario). Where
+  there are no comps, the agent says so rather than guessing.
+- **Verified on Calgary.** Accuracy is validated only for **Calgary**, and the golden-set
+  regression addresses and the hold-one-out backtest are all **Calgary-based**. Other metros
+  run, but aren't accuracy-checked yet.
+
+See `docs/superpowers/specs/2026-06-06-kv-comp-analysis-design.md`.
+
+## What I'd build next
+The baseline value is deliberately *before* property-specific condition and neighbourhood
+quality. The next two steps fold those in:
+
+- **Photo-informed condition.** Take in listing or inspection **photos** to read condition,
+  finish, and renovation level — moving from a comps-only baseline toward an accurate as-is
+  value instead of leaving condition for the underwriter to mark down by hand.
+- **Location & community signals.** Source neighbourhood data that genuinely moves price —
+  **household income levels, school districts, crime rates, proximity to major roads (noise),
+  and nearby value-adding amenities** — and factor it into both the estimate and the report.
+
+Further out: richer, authoritative sold feeds through the pluggable `CompSource` (MLS/DDF, Land
+Titles, or KV's internal deal records) for denser comps, and pooled feature derivation so sparse
+comp sets can still value individual features instead of leaving them unadjusted.
