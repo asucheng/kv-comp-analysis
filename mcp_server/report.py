@@ -97,8 +97,9 @@ def _warnings_section(target: list[str]) -> str:
 def _comp_row(rc) -> str:
     c = rc.comp
     dist = f"{c.distance_km:.1f} km" if c.distance_km is not None else "—"
+    built = _esc(c.year_built) if c.year_built else "—"
     return (f"<tr><td>{_esc(c.address)}</td><td>{_money(c.sold_price)}</td>"
-            f"<td>{_esc(c.sold_date)}</td><td>{c.sqft:,.0f}</td>"
+            f"<td>{_esc(c.sold_date)}</td><td>{c.sqft:,.0f}</td><td>{built}</td>"
             f"<td>${c.price_per_sqft:,.0f}</td><td>{dist}</td>"
             f"<td>{_esc(c.include_reason or '')}</td></tr>")
 
@@ -107,8 +108,8 @@ def _comps_section(comps) -> str:
     kept = [rc for rc in comps if rc.kept]
     kept.sort(key=lambda rc: (rc.comp.distance_km is None, rc.comp.distance_km or 0))
     excluded = [rc for rc in comps if not rc.kept]
-    head = ("<thead><tr><th>Address</th><th>Sold $</th><th>Date</th><th>Sqft</th>"
-            "<th>$/sqft</th><th>Dist</th><th>Why included</th></tr></thead>")
+    head = ("<thead><tr><th>Address</th><th>Sold $</th><th>Sold date</th><th>Sqft</th>"
+            "<th>Built</th><th>$/sqft</th><th>Dist</th><th>Why included</th></tr></thead>")
     top = "".join(_comp_row(rc) for rc in kept[:10])
     out = [f"<section><h2>Comparable sales</h2>"
            f"<p class='muted'>{len(kept)} comps used (closest 10 shown).</p>"
@@ -178,7 +179,13 @@ def _coeff_tile(c: CoefficientTrace, per_comp) -> str:
 def _adjustments_section(est: Estimate) -> str:
     tiles = "".join(_coeff_tile(c, est.per_comp) for c in est.coefficients)
     return (f"<section><h2>Adjustments</h2>"
-            f"<p class='muted'>Click a tile to see the comps and arithmetic behind each number.</p>"
+            f"<p class='muted'>Every adjustment is derived from the comps themselves by a ladder of "
+            f"methods, strongest first: <strong>matched pairs</strong> (the primary method — two "
+            f"near-identical comps differing only in this one factor, so the price gap is its value), "
+            f"falling back to <strong>grouping</strong> (higher- vs lower-count median split), then "
+            f"<strong>regression</strong> (least-squares slope) when there aren't enough clean pairs. "
+            f"If none yield a usable signal, the factor is left unadjusted. Each tile's method label "
+            f"shows which was used — click a tile for the comps and arithmetic.</p>"
             f"<div class='tiles'>{tiles}</div></section>")
 
 
@@ -226,6 +233,9 @@ details.tile{border:1px solid var(--line);border-radius:10px;background:#fafbfc;
 details.tile>summary{list-style:none;cursor:pointer;padding:12px 14px;display:flex;
 flex-wrap:wrap;align-items:center;gap:8px}
 details.tile>summary::-webkit-details-marker{display:none}
+details.tile>summary::before{content:"▸";color:var(--muted);font-size:11px;
+display:inline-block;transition:transform .15s}
+details.tile[open]>summary::before{transform:rotate(90deg)}
 .factor{font-weight:600;text-transform:capitalize}.val{font-variant-numeric:tabular-nums;
 font-weight:700;color:var(--accent)}.method{font-size:11px;color:var(--muted)}
 .chip{margin-left:auto;font-size:11px;padding:2px 9px;border-radius:999px;color:#fff}
@@ -237,9 +247,43 @@ padding:8px 10px;border-radius:7px;color:#344054}
 table.trace td:last-child{font-variant-numeric:tabular-nums;white-space:nowrap}
 .disc{font-size:13px;padding:9px 0;border-bottom:1px solid var(--line)}.disc:last-child{border:0}
 ul{margin:0;padding-left:20px;font-size:13px}li{margin:4px 0}
+details.confkey{margin-top:12px}details.confkey>summary{cursor:pointer;color:var(--muted);font-size:12px}
+.confkey ul{margin-top:8px}
 footer{color:var(--muted);font-size:12px;text-align:center;margin-top:20px}
 @media print{body{background:#fff}section,details.tile{break-inside:avoid}}
 """
+
+
+# Always-included "verify next" items — they map to the engine's known blind spots (condition is
+# out of scope; location is not adjusted within the 3 km radius), so they apply to every report
+# regardless of what the agent adds. Appended after the agent's subject-specific items.
+_STANDARD_VERIFY = [
+    "Verify the property's condition in person or from photos — condition, renovations and deferred "
+    "maintenance are NOT in this comps-derived figure. Adjust up for recent renovation, down for repairs.",
+    "Check the specific location / community — the estimate assumes location doesn't affect value "
+    "within the 3 km search radius, which real markets violate (a better/worse pocket, a busy road, "
+    "backing onto greenspace, etc.).",
+]
+
+
+# Plain-language glossary for the confidence rubric, shown (collapsed) under the rating.
+_CONF_KEY = (
+    "<details class='confkey'><summary>What sets the confidence rating</summary><ul>"
+    "<li><strong>Comp count</strong> — how many sold comps were used. More is more robust; "
+    "high confidence needs at least 6.</li>"
+    "<li><strong>$/sqft CoV (coefficient of variation)</strong> — the spread of the comps' "
+    "<em>adjusted</em> $/sqft as a fraction of the average (std-dev ÷ mean). It measures how much "
+    "the comps still disagree on value <em>after</em> each is adjusted to the subject. "
+    "<strong>Low (≤ 0.10, i.e. ≈ ±10%)</strong> = tight agreement → supports high confidence; "
+    "<strong>high (&gt; 0.10)</strong> = the comps scatter → more uncertainty, caps at medium.</li>"
+    "<li><strong>Ladder depth</strong> — how far the comp search had to relax KV's house rules to "
+    "find enough comps (recency 6 → 12 mo, then the secondary match toggles). "
+    "<strong>0</strong> = found enough at the strictest limits (best); "
+    "<strong>higher</strong> = had to widen, so the comps are less comparable → lower confidence.</li>"
+    "<li><strong>Method strength</strong> — if the time or size adjustment fell back to a weak "
+    "method (regression / no usable signal), confidence is capped at medium.</li>"
+    "</ul></details>"
+)
 
 
 def render_report_html(payload: ReportPayload) -> str:
@@ -256,7 +300,7 @@ def render_report_html(payload: ReportPayload) -> str:
             f"{_esc(est.confidence)} confidence</span></header>")
     conf = (f"<section><h2>Confidence &amp; reasoning</h2>"
             f"<p>{_esc(payload.confidence_reasoning)}</p>"
-            f"<p class='muted'>{_esc(drivers)}</p></section>")
+            f"<p class='muted'>{_esc(drivers)}</p>{_CONF_KEY}</section>")
     body = "".join([
         hero,
         _subject_section(s),
@@ -265,7 +309,7 @@ def render_report_html(payload: ReportPayload) -> str:
         _adjustments_section(est),
         _warnings_section(payload.target_warnings),
         _disclosures_section(est),
-        _list_section("What I'd verify next", payload.verify_next),
+        _list_section("What I'd verify next", list(payload.verify_next) + _STANDARD_VERIFY),
         f"<footer>Source: HonestDoor sold history (~180-day window). "
         f"Generated {_esc(payload.as_of)}. Scope: AB / BC, calibrated on Calgary.</footer>",
     ])
