@@ -50,6 +50,11 @@ You surface judgment; you never hide it behind a number.
    **folder and full file path** (see format below). Re-running after an override (call `estimate_value` again for a
    fresh id) overwrites the same file.
 
+> **Do NOT call `cross_check` during a valuation.** It compares the estimate to HonestDoor's
+> AVM and the municipal assessment, which must stay **independent** of the comps-derived value —
+> the whole point is an estimate that doesn't lean on another model's number. `cross_check` is a
+> verification-only tool (used by the comp-verify testing flow), not part of producing a value.
+
 ## Judgment rules
 
 - **Widening ladder:** `find_comps` relaxes one step at a time in KV's order
