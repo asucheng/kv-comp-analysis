@@ -185,6 +185,12 @@ def reconcile(subject: Subject, comps: list[Comp], rules: AdjustmentRules, *,
         dv = derive_feature_unit(subject, comps, resid, factor)
         if ov[factor] is not None:
             dv = _override(dv, ov[factor])
+        # A half-bath can't be worth more than a full bath (full is derived first). If the
+        # independent derivations violate that, the half-bath signal is confounded — don't adjust.
+        if (factor == "half_baths" and dv.value and feats.get("full_baths")
+                and feats["full_baths"].value and dv.value > feats["full_baths"].value):
+            dv = Derivation(0.0, "none", "our-judgment",
+                            "half-bath exceeded the full-bath value (confounded); not adjusted", "low")
         feats[factor] = dv
         resid = [r - feat_dollar(getattr(subject, factor), getattr(c, factor), dv.value)
                  for r, c in zip(resid, comps)]
