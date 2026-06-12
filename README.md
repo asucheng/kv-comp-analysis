@@ -6,7 +6,7 @@ comparable recent sales (KV's house rules), adjusts them, and produces a transpa
 underwriter-style value estimate.
 
 ## Demo
-▶️ **[Watch the demo (Loom)](https://www.loom.com/share/45fb2ab163af4a1cb2ffa856384590e9)** — a
+▶️ **[Watch the demo (Loom)](https://www.loom.com/share/e63c037ec62143cea927f392e2473ac7)** — a
 full run in Claude Desktop: enter an address, find comps under KV's house rules, derive the
 adjustments, and open the interactive HTML report.
 
