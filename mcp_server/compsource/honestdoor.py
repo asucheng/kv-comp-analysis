@@ -84,15 +84,27 @@ def _mls_beds(details: dict[str, Any]):
     return None if base is None else base + (_to_num(details.get("numBedroomsPlus")) or 0)
 
 
+def _baths_equiv(b):
+    """Convert HonestDoor's full.half bath notation (2.1 = 2 full + 1 half) to bath-EQUIVALENTS
+    (full + 0.5*half = 2.5), so a half-bath is a real 0.5 step. The raw .Y is a half-bath COUNT,
+    not a fraction — subtracting it directly (2.1 - 2.0 = 0.1) makes the adjustment engine divide
+    by ~0 and the per-bath value explode. Whole counts (3.0) are unchanged. Null-safe."""
+    if b is None:
+        return None
+    full = int(b)
+    half = round((b - full) * 10)
+    return full + 0.5 * half
+
+
 def _mls_baths(details: dict[str, Any]):
-    """HonestDoor's X.Y bath convention = full.half. MLS `numBathrooms` is the TOTAL bath
-    count and `numBathroomsPlus` is how many of those are half-baths, so full = total - half
-    (e.g. 3 total / 1 half -> 2 full + 1 half -> 2.1; verified vs HonestDoor's bathroomsTotal)."""
+    """Bath-EQUIVALENTS from MLS counts: `numBathrooms` is the TOTAL bath count and
+    `numBathroomsPlus` is how many of those are half-baths -> full + 0.5*half
+    (e.g. 3 total / 1 half -> 2 full + 1 half -> 2.5)."""
     total = _to_num(details.get("numBathrooms"))
     if total is None:
         return None
     half = _to_num(details.get("numBathroomsPlus")) or 0
-    return round(max(total - half, 0) + half / 10, 1)
+    return max(total - half, 0) + 0.5 * half
 
 
 _GARAGE_WORDS = {"single": 1, "double": 2, "triple": 3, "quadruple": 4, "quad": 4}
@@ -169,7 +181,7 @@ def multisearch_item_to_record(item: dict[str, Any]) -> PropertyRecord:
         sqft=item.get("livingArea"),
         year_built=item.get("yearBuilt"),
         beds=_coalesce_attr(item, "bedroomsTotal", "bedroomsTotalEst"),
-        baths=_coalesce_attr(item, "bathroomsTotal", "bathroomsTotalEst"),
+        baths=_baths_equiv(_coalesce_attr(item, "bathroomsTotal", "bathroomsTotalEst")),
         garage=item.get("garageSpaces"),
         lot_sf=round(lot * _SQM_TO_SQFT) if lot else None,
         hd_estimate=item.get("predictedValue"),
@@ -216,7 +228,7 @@ def listing_to_comp(row: dict[str, Any]) -> Optional[Comp]:
         sold_date=_parse_iso_date(row["soldDate"]),
         sqft=float(prop["livingArea"]),
         beds=_first(_mls_beds(details), _coalesce_attr(prop, "bedroomsTotal", "bedroomsTotalEst")),
-        baths=_first(_mls_baths(details), _coalesce_attr(prop, "bathroomsTotal", "bathroomsTotalEst")),
+        baths=_first(_mls_baths(details), _baths_equiv(_coalesce_attr(prop, "bathroomsTotal", "bathroomsTotalEst"))),
         garage=_first(_to_num(details.get("numGarageSpaces")),
                       _garage_from_parking(parking_type), prop.get("garageSpaces")),
         parking_type=parking_type,

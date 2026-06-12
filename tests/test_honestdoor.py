@@ -42,7 +42,7 @@ def test_listing_to_comp_maps_sold_sale():
     c = listing_to_comp(row)
     assert c is not None
     assert c.sold_price == 670888.0 and c.sqft == 1312.0
-    assert c.baths == 3.1 and c.garage == 2
+    assert c.baths == 3.5 and c.garage == 2   # 4 total - 1 half = 3 full + 1 half -> 3.5 equiv
     assert c.sold_date == date(2026, 1, 12) and c.lat == 51.0034744
     assert c.price_per_sqft == round(670888.0 / 1312, 2)
 
@@ -83,7 +83,7 @@ def test_search_subject_maps_ranked_results():
     top = recs[0]
     assert top.slug == "122-auburn-bay-heights-se-calgary-ab"
     assert top.resolved_address == "122 Auburn Bay Heights SE Calgary AB"
-    assert top.sqft == 1450 and top.beds == 2 and top.baths == 2.1 and top.garage == 2
+    assert top.sqft == 1450 and top.beds == 2 and top.baths == 2.5 and top.garage == 2
     assert top.year_built == 2006 and top.community == "Auburn Bay" and top.hd_estimate == 537100
     assert top.lat == 50.8849599 and top.lng == -113.964597
     assert top.lot_sf == round(270.9959123 * _SQM_TO_SQFT)
@@ -234,7 +234,7 @@ def test_listing_to_comp_falls_back_to_estimated_bed_bath():
 
 def test_listing_to_comp_prefers_exact_over_estimate():
     c = listing_to_comp(_row(bed=3, bed_est=5, bath=2.1, bath_est=2))
-    assert c.beds == 3 and c.baths == 2.1        # exact wins when present
+    assert c.beds == 3 and c.baths == 2.5        # exact wins when present (2.1 -> 2.5 equiv)
 
 
 def test_multisearch_item_falls_back_to_estimated_bed_bath():
@@ -247,7 +247,7 @@ def test_multisearch_item_falls_back_to_estimated_bed_bath():
 
     item_exact = {**item, "bedroomsTotal": 3, "bathroomsTotal": 2.1}
     rec2 = multisearch_item_to_record(item_exact)
-    assert rec2.beds == 3 and rec2.baths == 2.1
+    assert rec2.beds == 3 and rec2.baths == 2.5
 
 
 # ---------------------------------------------------------------------------
@@ -274,16 +274,26 @@ def test_listing_to_comp_uses_mls_details():
     c = listing_to_comp(_mls_row(num_garage="2"))
     assert c.garage == 2                       # from details.numGarageSpaces
     assert c.beds == 3                         # numBedrooms 3 + numBedroomsPlus 0
-    assert c.baths == 2.1                      # 3 total - 1 half = 2 full + 1 half -> 2.1
+    assert c.baths == 2.5                      # 3 total - 1 half = 2 full + 1 half -> 2.5 equiv
     assert c.property_type == "detached"
     assert c.parking_type == "Double Garage Detached"
 
 
 def test_mls_bath_convention_total_minus_half():
-    # numBathrooms is the TOTAL count; numBathroomsPlus is how many are half-baths.
+    # numBathrooms is the TOTAL count; numBathroomsPlus is how many are half-baths -> bath-equiv.
     assert listing_to_comp(_mls_row(baths="2", baths_plus="0")).baths == 2.0   # 2 full
-    assert listing_to_comp(_mls_row(baths="4", baths_plus="1")).baths == 3.1   # 3 full + 1 half
-    assert listing_to_comp(_mls_row(baths="3", baths_plus="1")).baths == 2.1   # 2 full + 1 half
+    assert listing_to_comp(_mls_row(baths="4", baths_plus="1")).baths == 3.5   # 3 full + 1 half
+    assert listing_to_comp(_mls_row(baths="3", baths_plus="1")).baths == 2.5   # 2 full + 1 half
+
+
+def test_baths_equiv_half_bath_is_a_half_step():
+    from mcp_server.compsource.honestdoor import _baths_equiv
+    assert _baths_equiv(2.1) == 2.5    # 2 full + 1 half
+    assert _baths_equiv(3.1) == 3.5
+    assert _baths_equiv(1.1) == 1.5
+    assert _baths_equiv(2.0) == 2.0    # whole count unchanged
+    assert _baths_equiv(None) is None
+    assert _baths_equiv(2.1) - _baths_equiv(2.0) == 0.5   # a half-bath is a 0.5 step, not 0.1
 
 
 def test_garage_inference_from_parking_type():
@@ -339,7 +349,7 @@ def test_enrich_subject_fills_from_mls_listing():
              "condominium": {"parkingType": "Double Garage Detached"}}]
     out = HonestDoorCompSource(client=_listing_client(rows)).enrich_subject(rec)
     assert out.garage == 2 and out.property_type == "detached"
-    assert out.parking_type == "Double Garage Detached" and out.baths == 2.1  # 3 total - 1 half
+    assert out.parking_type == "Double Garage Detached" and out.baths == 2.5  # 3 total - 1 half
 
 
 def test_enrich_subject_noop_without_property_id():
