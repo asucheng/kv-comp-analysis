@@ -236,7 +236,7 @@ def derive_marginal_ppsf(subject: Subject, comps: list[Comp], prices: list[float
 # (our-judgment), not adjustment values — generous enough to admit real (even luxury)
 # values, tight enough to reject a confounded derivation (e.g. a "$112k garage" that is
 # really a size/quality difference). A per-unit value above the cap falls through.
-_FEATURE_CAP = {"beds": 80_000.0, "baths": 40_000.0, "garage": 40_000.0}
+_FEATURE_CAP = {"beds": 80_000.0, "full_baths": 40_000.0, "half_baths": 15_000.0, "garage": 40_000.0}
 
 
 def _alike_except(a: Comp, b: Comp, factor: str, *, strict: bool) -> bool:

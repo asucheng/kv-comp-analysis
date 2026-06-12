@@ -317,3 +317,36 @@ def test_feature_unit_emits_pair_traces():
     assert dv.method == "matched_pair"
     assert len(dv.pairs) >= 1
     assert "garage" in dv.pairs[0].detail
+
+
+def test_half_bath_value_capped_tightly():
+    # a confounded half-bath (~$20k/half) must be rejected by the tight half-bath cap, not applied.
+    from mcp_server.derivation import derive_feature_unit, _FEATURE_CAP
+    assert _FEATURE_CAP["half_baths"] <= 15000 < _FEATURE_CAP["full_baths"]
+    s = _subject(baths=2.1)   # 2 full + 1 half
+    comps = [_comp(0, sqft=1500, beds=3, baths=2.0, garage=2, addr="h0a"),
+             _comp(0, sqft=1500, beds=3, baths=2.0, garage=2, addr="h0b"),
+             _comp(0, sqft=1500, beds=3, baths=2.1, garage=2, addr="h1a"),
+             _comp(0, sqft=1500, beds=3, baths=2.1, garage=2, addr="h1b")]
+    residuals = [500_000, 502_000, 520_000, 522_000]   # implies ~$20k per half-bath
+    dv = derive_feature_unit(s, comps, residuals, "half_baths")
+    assert dv.method == "none"
+
+
+def test_half_bath_never_exceeds_full_bath():
+    # reconcile guard: if half derives above full, the half-bath isn't adjusted.
+    from datetime import date
+    from mcp_server.models import Subject, Comp, AdjustmentRules
+    from mcp_server.estimate import reconcile
+    s = Subject(address="S", lat=51.0, lng=-114.0, sqft=1500, year_built=2010, beds=3, baths=2.1, garage=2)
+    # full-bath pairs imply a small $; half-bath pairs imply a large $ (> full) -> half dropped.
+    comps = [
+        Comp(address="a", lat=51, lng=-114, sold_price=500_000, sold_date=date(2026,4,1), sqft=1500, beds=3, baths=2.0, garage=2),  # full2 half0
+        Comp(address="b", lat=51, lng=-114, sold_price=508_000, sold_date=date(2026,4,1), sqft=1500, beds=3, baths=3.0, garage=2),  # full3 half0
+        Comp(address="c", lat=51, lng=-114, sold_price=525_000, sold_date=date(2026,4,1), sqft=1500, beds=3, baths=2.1, garage=2),  # full2 half1
+        Comp(address="d", lat=51, lng=-114, sold_price=533_000, sold_date=date(2026,4,1), sqft=1500, beds=3, baths=3.1, garage=2),  # full3 half1
+    ]
+    est = reconcile(s, comps, AdjustmentRules(), as_of=date(2026,6,1))
+    hb = next(c for c in est.coefficients if c.factor == "half_baths")
+    fb = next(c for c in est.coefficients if c.factor == "full_baths")
+    assert not (hb.value and fb.value and hb.value > fb.value)   # invariant holds
