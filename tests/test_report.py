@@ -140,3 +140,44 @@ def test_render_collapses_comps_beyond_ten():
     p.comps = [c for c in p.comps if c.kept] + extra + [c for c in p.comps if not c.kept]
     html = render_report_html(p)
     assert "more comps" in html  # collapse summary present
+
+
+def test_adjustment_tiles_have_expand_collapse_indicator():
+    html = render_report_html(_payload())
+    assert "details.tile>summary::before" in html   # triangle marker present
+    assert "rotate(90deg)" in html                  # rotates open vs collapsed
+
+
+def test_comps_table_has_year_built_column():
+    html = render_report_html(_payload())
+    assert "<th>Built</th>" in html
+    assert "<td>2007</td>" in html   # _payload comps are year_built 2007
+
+
+def test_confidence_section_explains_cov_and_ladder_depth():
+    html = render_report_html(_payload())
+    assert "coefficient of variation" in html
+    assert "Ladder depth" in html and "relax KV's house rules" in html
+
+
+def test_verify_next_always_includes_condition_and_location():
+    # standard checks are appended by the renderer regardless of what the agent supplies
+    from datetime import date
+    from mcp_server.models import Subject, Comp, AdjustmentRules, ReportComp, ReportPayload
+    from mcp_server.estimate import reconcile
+    s = Subject(address="S", lat=51.0, lng=-114.0, sqft=1416, year_built=2007, beds=3, baths=2, garage=1)
+    comps = [Comp(address=a, lat=51.0, lng=-114.0, sold_price=p, sold_date=date(2026, 4, 1),
+                  sqft=sq, year_built=2007, beds=3, baths=2, garage=2)
+             for a, p, sq in [("a", 536_500, 1429), ("b", 560_000, 1425)]]
+    est = reconcile(s, comps, AdjustmentRules(), as_of=date(2026, 6, 10))
+    html = render_report_html(ReportPayload(subject=s, comps=[ReportComp(comp=c) for c in comps],
+                                            estimate=est, verify_next=[], as_of=date(2026, 6, 10)))
+    assert "What I&#x27;d verify next" in html or "What I'd verify next" in html
+    assert "condition in person or from photos" in html
+    assert "specific location / community" in html
+
+
+def test_adjustments_section_explains_method_ladder():
+    html = render_report_html(_payload())
+    for phrase in ["matched pairs", "grouping", "regression", "left unadjusted"]:
+        assert phrase in html
