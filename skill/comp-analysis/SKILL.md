@@ -42,13 +42,18 @@ You surface judgment; you never hide it behind a number.
    confidence; pass `overrides` to correct any coefficient, and `exclusions` (a list of
    `{"address","reason"}`) to drop outliers from the value. It returns an **`estimate_id`** —
    keep it; that's what render_report needs.
-5. **Present the file** (format below).
+5. **Summarize in chat** (format below) — keep it brief. The **HTML report is the full file**,
+   so do NOT paste the entire comps table or every adjustment line into chat: that bloats the
+   response and Desktop fails it with *"Claude couldn't finish this response."* Show a short
+   summary and let the report carry the detail.
 6. **`render_report(estimate_id, confidence_reasoning?, target_warnings?, verify_next?)`**
    — the FINAL step, once the value is settled (address confirmed, any `overrides` applied).
    Pass the **`estimate_id`** from `estimate_value` plus your short narrative — the server still
-   holds the subject, comps and estimate, so **do NOT re-send them**. Then surface the returned
-   **folder and full file path** (see format below). Re-running after an override (call `estimate_value` again for a
-   fresh id) overwrites the same file.
+   holds the subject, comps and estimate, so **do NOT re-send them**. Re-running after an override
+   (call `estimate_value` again for a fresh id) overwrites the same file. **Keep this closing
+   reply short** — a 2–3 sentence conclusion (point value, range, confidence) plus the returned
+   **folder and full file path** (format below); the HTML holds the full detail, so don't
+   re-present the comps table or adjustment grid here.
 
 > **Do NOT call `cross_check` during a valuation.** It compares the estimate to HonestDoor's
 > AVM and the municipal assessment, which must stay **independent** of the comps-derived value —
@@ -74,6 +79,12 @@ You surface judgment; you never hide it behind a number.
   "Estimate". State data limits (≈180-day window; per-community search).
 
 ## Output — "the file"
+
+This is the full file — it's what the **HTML report** contains. In **chat**, present a *trimmed*
+version so the response can't overflow: a one-line subject, the funnel sentence, the ~8 closest
+comps (not all of them), and the conclusion + report path. The complete comps table, the full
+per-factor adjustment grid, and the disclosures all live in the HTML, so you never need to
+reproduce them in chat.
 
 1. **Subject** — address + key attributes, noting user-provided vs looked-up.
 2. **Comps** — table: address, sold price/date, sqft, $/sqft, distance, why included. Use the
