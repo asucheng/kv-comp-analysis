@@ -94,3 +94,25 @@ def test_coefficient_trace_and_report_payload_models():
     )
     assert payload.comps[0].kept is True
     assert payload.estimate.coefficients[0].value == 284.0
+
+
+def test_baths_split_into_full_and_half_features():
+    from mcp_server.models import Subject, Comp
+    from datetime import date
+    s = Subject(address="x", baths=2.1)          # 2 full + 1 half
+    assert s.full_baths == 2 and s.half_baths == 1
+    assert Subject(address="x", baths=3.1).half_baths == 1   # 3 full + 1 half
+    assert Subject(address="x", baths=2.0).half_baths == 0   # 2 full, no half
+    s0 = Subject(address="x")
+    assert s0.full_baths is None and s0.half_baths is None
+    c = Comp(address="x", lat=51.0, lng=-114.0, sold_price=5e5, sold_date=date(2026, 1, 1),
+             sqft=1500, baths=2.1)
+    assert c.full_baths == 2 and c.half_baths == 1
+
+
+def test_baths_split_survives_dict_roundtrip():
+    # the agent passes the subject back as a dict (get_subject -> find_comps); the split must
+    # survive Subject(**model_dump()).
+    from mcp_server.models import Subject
+    s2 = Subject(**Subject(address="x", baths=2.1).model_dump())
+    assert s2.baths == 2.1 and s2.full_baths == 2 and s2.half_baths == 1

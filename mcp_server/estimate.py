@@ -19,7 +19,8 @@ class DerivedSet:
     time: Derivation
     size: Derivation
     beds: Derivation
-    baths: Derivation
+    full_baths: Derivation
+    half_baths: Derivation
     garage: Derivation
 
 
@@ -34,7 +35,8 @@ def _override(dv: Derivation, value) -> Derivation:
     return Derivation(value, dv.method, "our-judgment", f"override (was {dv.value})", "medium")
 
 
-_UNIT = {"beds": "bed", "baths": "bath", "garage": "garage"}
+_UNIT = {"beds": "bed", "full_baths": "full bath", "half_baths": "half bath", "garage": "garage"}
+_FEATURES = ("beds", "full_baths", "half_baths", "garage")
 
 
 def _adj(factor, method, source, *, pct=None, dollar=None, evidence, conf) -> Adjustment:
@@ -103,7 +105,8 @@ def apply_adjustments(subject: Subject, comp: Comp, derived: DerivedSet, *, as_o
                             evidence=f"{comp.sqft - subject.sqft:+.0f} sqft @ ${derived.size.value:.0f}/sqft; {derived.size.evidence}",
                             conf=derived.size.confidence))
 
-    for factor, dv in (("beds", derived.beds), ("baths", derived.baths), ("garage", derived.garage)):
+    for factor, dv in (("beds", derived.beds), ("full_baths", derived.full_baths),
+                       ("half_baths", derived.half_baths), ("garage", derived.garage)):
         sc, cc = getattr(subject, factor), getattr(comp, factor)
         d = feat_dollar(sc, cc, dv.value)
         p += d
@@ -176,8 +179,9 @@ def reconcile(subject: Subject, comps: list[Comp], rules: AdjustmentRules, *,
     # 3-5. features, each netted out before the next
     resid = list(sprices)
     feats: dict[str, Derivation] = {}
-    ov = {"beds": overrides.bed_value, "baths": overrides.bath_value, "garage": overrides.garage_value}
-    for factor in ("beds", "baths", "garage"):
+    ov = {"beds": overrides.bed_value, "full_baths": overrides.bath_value,
+          "half_baths": overrides.half_bath_value, "garage": overrides.garage_value}
+    for factor in _FEATURES:
         dv = derive_feature_unit(subject, comps, resid, factor)
         if ov[factor] is not None:
             dv = _override(dv, ov[factor])
@@ -185,9 +189,10 @@ def reconcile(subject: Subject, comps: list[Comp], rules: AdjustmentRules, *,
         resid = [r - feat_dollar(getattr(subject, factor), getattr(c, factor), dv.value)
                  for r, c in zip(resid, comps)]
 
-    derived = DerivedSet(time, size, feats["beds"], feats["baths"], feats["garage"])
+    derived = DerivedSet(time, size, feats["beds"], feats["full_baths"],
+                         feats["half_baths"], feats["garage"])
     notes.append(f"time {time.method} {time.value*100:.2f}%/mo; size {size.method} ${size.value:.0f}/sqft")
-    for fname in ("beds", "baths", "garage"):
+    for fname in _FEATURES:
         fdv = feats[fname]
         if fdv.value:
             notes.append(f"{fname}: ${fdv.value:,.0f} per {_UNIT[fname]} ({fdv.method}; {fdv.evidence})")
@@ -220,7 +225,8 @@ def reconcile(subject: Subject, comps: list[Comp], rules: AdjustmentRules, *,
         _coeff("time", time, is_pct=True),
         _coeff("size", size, is_pct=False),
         _coeff("beds", feats["beds"], is_pct=False, unit="bed"),
-        _coeff("baths", feats["baths"], is_pct=False, unit="bath"),
+        _coeff("full_baths", feats["full_baths"], is_pct=False, unit="full bath"),
+        _coeff("half_baths", feats["half_baths"], is_pct=False, unit="half bath"),
         _coeff("garage", feats["garage"], is_pct=False, unit="garage"),
     ]
 

@@ -37,7 +37,7 @@ def test_apply_size_brings_larger_comp_down():
     s = _subject(sqft=2000)
     c = _comp(880_000, sqft=2200)               # 200 sqft larger
     derived = DerivedSet(_flat(0.0), Derivation(50.0, "grouping", "article-method", "x", "medium"),
-                         _flat(0.0), _flat(0.0), _flat(0.0))
+                         _flat(0.0), _flat(0.0), _flat(0.0), _flat(0.0))   # beds, full, half, garage
     ca = apply_adjustments(s, c, derived, as_of=AS_OF)
     size = next(a for a in ca.adjustments if a.factor == "size")
     assert size.value_dollar == -10000.0        # 200 * 50, subtracted
@@ -88,7 +88,7 @@ def test_estimate_exposes_coefficient_traces():
                                  ("c", 705_000, 2000, 1), ("d", 718_000, 2000, 2)]]
     est = reconcile(s, comps, AdjustmentRules(), as_of=date(2026, 6, 1))
     factors = [c.factor for c in est.coefficients]
-    assert factors == ["time", "size", "beds", "baths", "garage"]
+    assert factors == ["time", "size", "beds", "full_baths", "half_baths", "garage"]
     size = next(c for c in est.coefficients if c.factor == "size")
     assert size.is_pct is False and size.value > 0  # positive $/sqft derived
     time = next(c for c in est.coefficients if c.factor == "time")

@@ -6,7 +6,8 @@ from mcp_server.models import ReportPayload, CoefficientTrace, Estimate, Subject
 CONF_COLOR = {"high": "#1a7f37", "medium": "#9a6700", "low": "#b42318"}
 
 # Per-unit label shown next to each coefficient's headline value.
-_UNIT_LABEL = {"size": "/sqft (marginal)", "beds": "/bed", "baths": "/bath", "garage": "/garage"}
+_UNIT_LABEL = {"size": "/sqft (marginal)", "beds": "/bed", "full_baths": "/full bath",
+               "half_baths": "/half bath", "garage": "/garage"}
 
 # Plain-language "what it measures / how / limit" for each adjustment, shown atop its tile.
 _FACTOR_DESC = {
@@ -19,9 +20,12 @@ _FACTOR_DESC = {
     "beds": "The value of one more bedroom — from pairs identical except bedroom count and within "
             "10% size, measured on the price after time and size are removed. Capped to reject a "
             "value confounded by size or quality.",
-    "baths": "The value of one more bathroom — from pairs identical except bath count and within "
-             "10% size, measured on the price after time and size are removed. Capped to reject a "
-             "value confounded by size or quality.",
+    "full_baths": "The value of one more FULL bathroom — from pairs identical except full-bath "
+             "count and within 10% size, measured on the price after time and size are removed. "
+             "Capped to reject a value confounded by size or quality.",
+    "half_baths": "The value of one more HALF bathroom (powder room) — derived as its OWN feature "
+             "from pairs differing only in half-bath count, so the market sets its worth rather "
+             "than assuming half a full bath. Often modest; not adjusted if there's no variation.",
     "garage": "The value of one more garage space — from pairs identical except garage count and "
               "within 10% size, measured on the price after time and size are removed. Capped to "
               "reject a value confounded by size or quality.",
