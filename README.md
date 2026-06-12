@@ -3,7 +3,7 @@
 A local MCP server + a `comp-analysis` Skill that turns Claude Desktop into a residential
 comp-analysis assistant for the Calgary market: given a subject property, it finds
 comparable recent sales (KV's house rules), adjusts them, and produces a transparent,
-underwriter-style value estimate — and can learn each underwriter's own methods.
+underwriter-style value estimate 
 
 ## The problem
 When a home builder borrows from KV Capital, KV — the lender — needs to know **how much the
