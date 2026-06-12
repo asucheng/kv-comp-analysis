@@ -150,14 +150,18 @@ Add the server, using the **path from step 3** as `command` (keep any existing
 > `"C:\\Users\\you\\kv-comp-analysis\\.venv\\Scripts\\kv-comp-analysis.exe"`.
 
 ### 5. Install the skill
-Claude Desktop loads skills from its own store, **not** from a folder on disk — so you
-upload the packaged skill zip through the Desktop UI (a file copy won't appear). The repo
-ships a prebuilt zip at `dist/comp-analysis.zip`; rebuild it any time the skill changes with
-`./scripts/package-skill.sh`.
+Claude Desktop loads skills from its own store, **not** from a folder on disk — so you upload
+a packaged skill zip through the Desktop UI (a file copy won't appear).
 
-In Claude Desktop: **Settings → Capabilities → Skills → Import** (or the skill **＋ / Upload**
-control), choose `dist/comp-analysis.zip` from this repo, and confirm. The `comp-analysis`
-skill should now appear in your skills list.
+First **build the zip** (it isn't checked in — `dist/` is git-ignored, so a fresh clone won't
+have it):
+```bash
+./scripts/package-skill.sh        # writes dist/comp-analysis.zip
+```
+Then, in Claude Desktop: **Settings → Capabilities → Skills → Import** (or the skill
+**＋ / Upload** control), choose the `dist/comp-analysis.zip` you just built, and confirm. The
+`comp-analysis` skill should now appear in your skills list. (Re-run the script and re-import
+whenever the skill changes.)
 
 ### 6. Fully restart Claude Desktop
 **Quit completely** (not just close the window — on Linux/Windows it keeps running in the
