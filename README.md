@@ -78,8 +78,7 @@ gate) before valuing**, and offers `match_candidates` when the top hit looks wro
 keeps a fuzzy neighbour from silently driving a valuation. A free **OpenStreetMap/Nominatim
 geocoder** remains as a coordinate fallback when nothing matches. The HonestDoor headline
 price (`predictedValue`) is an **AVM estimate, not a sale** — the agent only treats Sold
-History as a real transaction. The data source is **pluggable** (`CompSource`): KV can swap
-in MLS/DDF, Land Titles, or internal deal records.
+History as a real transaction. 
 
 ## Setup on Claude Desktop (step by step)
 
