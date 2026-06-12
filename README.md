@@ -96,17 +96,14 @@ Add the server, using the **path from step 3** as `command` (keep any existing
 > `"C:\\Users\\you\\kv-comp-analysis\\.venv\\Scripts\\kv-comp-analysis.exe"`.
 
 ### 5. Install the skill
-Copy the skill from the repo into your Claude skills directory:
-```bash
-# macOS / Linux
-mkdir -p ~/.claude/skills
-cp -r skill/comp-analysis ~/.claude/skills/comp-analysis
-```
-```powershell
-# Windows (PowerShell)
-mkdir $env:USERPROFILE\.claude\skills -Force
-Copy-Item -Recurse skill\comp-analysis $env:USERPROFILE\.claude\skills\comp-analysis
-```
+Claude Desktop loads skills from its own store, **not** from a folder on disk — so you
+upload the packaged skill zip through the Desktop UI (a file copy won't appear). The repo
+ships a prebuilt zip at `dist/comp-analysis.zip`; rebuild it any time the skill changes with
+`./scripts/package-skill.sh`.
+
+In Claude Desktop: **Settings → Capabilities → Skills → Import** (or the skill **＋ / Upload**
+control), choose `dist/comp-analysis.zip` from this repo, and confirm. The `comp-analysis`
+skill should now appear in your skills list.
 
 ### 6. Fully restart Claude Desktop
 **Quit completely** (not just close the window — on Linux/Windows it keeps running in the
@@ -125,8 +122,8 @@ for the square footage. If it does ask, see **Troubleshooting** below.
 - **It keeps asking for square footage** — usually the running process predates a code
   change, or the chat cached a pre-fix result. Fully restart Desktop (step 6) **and** start
   a **new** conversation (an existing chat reuses the subject it already resolved).
-- **Skill not triggering** — confirm `~/.claude/skills/comp-analysis/SKILL.md` exists and
-  you restarted Desktop.
+- **Skill not triggering** — confirm `comp-analysis` shows up under Settings → Capabilities →
+  Skills (re-import `dist/comp-analysis.zip` if not) and that you restarted Desktop.
 
 ## Use
 > "Run a comp analysis on 123 Maple Dr, Roxboro, Calgary — it's a 2,000 sqft detached built 1985."
