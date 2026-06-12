@@ -13,17 +13,13 @@ sales (comps)** and reasoning from them. This project uses AI to take that bottl
 underwriter's desk — not to replace their judgment, but to do the legwork and lay the evidence
 out for them.
 
-The data fights you, too: Alberta sold prices are confidential on MLS, the DDF API needs a
-REALTOR® membership, Zillow doesn't operate in Canada, and municipal assessments are
-*valuations, not sales* (and lack sqft/beds/baths). So sourcing real, attributed sold data is
-itself part of the problem.
 
 ## Approach
 Most valuation tools on the internet hand back a single estimated number and quietly ask you
 to trust it. **This one shows its work.** It doesn't just produce a baseline value — it walks
 through *how* it got there: which comps it used, why those, and how the comps themselves imply
 each adjustment across **time, size, and features**. The underwriter sees the reasoning, not a
-black box, and can challenge any of it.
+black box.
 
 **It lives where the underwriter already works — Claude Desktop.** No new app, web platform, or
 system to learn: the project ships as an **MCP server + a Skill** installed into Claude Desktop.
@@ -34,7 +30,7 @@ analysis runs. At the end, Claude returns a **link to a self-contained HTML repo
 into a browser to explore every comp and every adjustment, with the evidence and arithmetic
 behind the baseline value.
 
-The comp-selection rules come from **Sam**, a KV underwriter — radius, size, recency, and age
+The comp-selection rules come from **Sam** — radius, size, recency, and age
 bands plus a secondary match — encoded as the tool defaults the agent applies (and an
 underwriter can override).
 
