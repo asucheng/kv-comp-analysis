@@ -176,18 +176,42 @@ def test_render_from_estimate_uses_cached_bundle(tmp_path):
     assert "solid set" in html and "Comparable sales" in html
 
 
-def test_render_from_estimate_applies_exclusions(tmp_path):
-    # The agent can curate a comp out by passing just its address + reason (small),
-    # not the whole comp set.
+def test_find_comps_returns_a_comps_id():
+    # The id is the handle the agent passes to estimate_value instead of re-emitting the
+    # whole comp array (which Desktop truncates).
     s = TOOLS.get_subject("123 Maple Dr, Calgary", overrides=SUBJECT_OVERRIDES)
-    comps = TOOLS.find_comps(s).comps
-    est = TOOLS.estimate_value(s, comps)
-    drop = comps[0].address
-    path = TOOLS.render_from_estimate(
-        est.estimate_id, out_dir=str(tmp_path),
-        exclusions=[{"address": drop, "reason": "atypical lot"}])
+    res = TOOLS.find_comps(s)
+    assert res.comps_id and res.comps_id.startswith("comps_")
+
+
+def test_estimate_from_comps_matches_direct_call():
+    # estimate_value(comps_id) must use the SAME full comp set find_comps produced.
+    s = TOOLS.get_subject("123 Maple Dr, Calgary", overrides=SUBJECT_OVERRIDES)
+    res = TOOLS.find_comps(s)
+    direct = TOOLS.estimate_value(s, res.comps, ladder_depth=len(res.relaxations))
+    via_id = TOOLS.estimate_from_comps(res.comps_id)
+    assert via_id.point == direct.point and len(via_id.per_comp) == len(res.comps)
+
+
+def test_estimate_from_comps_applies_exclusions(tmp_path):
+    # Curate an outlier out of the VALUE by naming it (address+reason) — it's dropped from
+    # the calc and shown as excluded in the report.
+    s = TOOLS.get_subject("123 Maple Dr, Calgary", overrides=SUBJECT_OVERRIDES)
+    res = TOOLS.find_comps(s)
+    drop = res.comps[0].address
+    est = TOOLS.estimate_from_comps(res.comps_id, exclusions=[{"address": drop, "reason": "atypical lot"}])
+    assert drop not in [ca.address for ca in est.per_comp]   # dropped from the calc
+    assert len(est.per_comp) < len(res.comps)
+    path = TOOLS.render_from_estimate(est.estimate_id, out_dir=str(tmp_path))
     html = open(path, encoding="utf-8").read()
-    assert "Excluded" in html and "atypical lot" in html
+    assert "Excluded" in html and "atypical lot" in html     # surfaced in the report
+
+
+def test_estimate_from_comps_unknown_id_raises_clear_error():
+    with pytest.raises(ValueError) as exc:
+        TOOLS.estimate_from_comps("comps_deadbeef")
+    msg = str(exc.value).lower()
+    assert "find_comps" in msg or "not found" in msg
 
 
 def test_render_from_estimate_unknown_id_raises_clear_error(tmp_path):

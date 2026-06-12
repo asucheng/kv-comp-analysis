@@ -84,6 +84,9 @@ class FindCompsResult(BaseModel):
     candidates_considered: int
     relaxations: list[Relaxation] = Field(default_factory=list)
     flags: list[str] = Field(default_factory=list)
+    # Server-issued handle for this comp set. estimate_value takes this id instead of the
+    # whole comp array, so the model never re-emits (and truncates) the comps.
+    comps_id: Optional[str] = None
 
 
 class AdjustmentRules(BaseModel):
