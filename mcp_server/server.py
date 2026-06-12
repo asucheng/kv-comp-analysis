@@ -88,7 +88,14 @@ class Tools:
         candidates = self.source.recent_sales(
             lat=subject.lat, lng=subject.lng, radius_km=FETCH_RADIUS_KM,
             lookback_months=FETCH_LOOKBACK_MONTHS, as_of=self.as_of)
-        return find_with_ladder(subject, candidates, criteria, as_of=self.as_of)
+        result = find_with_ladder(subject, candidates, criteria, as_of=self.as_of)
+        # Cache the full set under a content-derived id and hand back only the id. estimate_value
+        # takes the id, so the model never re-emits the comp array (Desktop truncates it).
+        key = subject.address + "|" + "|".join(c.address for c in result.comps)
+        result.comps_id = "comps_" + hashlib.sha1(key.encode()).hexdigest()[:8]
+        self._cache[result.comps_id] = {
+            "subject": subject, "comps": list(result.comps), "relaxations": list(result.relaxations)}
+        return result
 
     def estimate_value(self, subject: Subject, comps: list, *,
                        rules: Optional[AdjustmentRules] = None,
@@ -103,27 +110,45 @@ class Tools:
         # id, not ~170K tokens of estimate+comps it would otherwise have to re-serialize.
         est.estimate_id = "est_" + hashlib.sha1(est.model_dump_json().encode()).hexdigest()[:8]
         self._cache[est.estimate_id] = {
-            "subject": subject, "comps": list(comps), "estimate": est, "as_of": self.as_of}
+            "subject": subject, "comps": list(comps), "excluded": [],
+            "estimate": est, "as_of": self.as_of}
+        return est
+
+    def estimate_from_comps(self, comps_id: str, *, rules: Optional[AdjustmentRules] = None,
+                            overrides: Optional[dict] = None,
+                            exclusions: Optional[list] = None) -> Estimate:
+        """Estimate from a cached comps_id (from find_comps) — the model passes the id, not the
+        comp array. `exclusions` is a list of {"address","reason"} to drop outlier comps from the
+        value; the dropped comps are kept for the report (shown as excluded)."""
+        bundle = self._cache.get(comps_id)
+        if bundle is None or "relaxations" not in bundle:
+            raise ValueError(
+                f"Comp set '{comps_id}' not found — re-run find_comps to get a fresh comps_id "
+                "(the server was restarted, or find_comps wasn't called this session).")
+        excl = {e["address"]: e.get("reason") for e in (exclusions or [])}
+        kept = [c for c in bundle["comps"] if c.address not in excl]
+        excluded = [(c, excl.get(c.address)) for c in bundle["comps"] if c.address in excl]
+        est = self.estimate_value(bundle["subject"], kept, rules=rules, overrides=overrides,
+                                  ladder_depth=len(bundle["relaxations"]))
+        self._cache[est.estimate_id]["excluded"] = excluded   # carry curated-out comps to render
         return est
 
     def render_from_estimate(self, estimate_id: str, *, confidence_reasoning: str = "",
                              target_warnings: Optional[list] = None,
                              verify_next: Optional[list] = None,
-                             exclusions: Optional[list] = None,
                              out_dir: Optional[str] = None) -> str:
-        """Render the report from a cached estimate_id plus the agent's small narrative.
-
-        `exclusions` is a list of {"address", "reason"} to mark specific cached comps as
-        curated-out — the agent names the comp, not the whole comp set."""
+        """Render the report from a cached estimate_id plus the agent's small narrative. The kept
+        comps and any curated-out comps both come from the cache (exclusions are set at
+        estimate_value, not here)."""
         bundle = self._cache.get(estimate_id)
-        if bundle is None:
+        if bundle is None or "estimate" not in bundle:
             raise ValueError(
                 f"Estimate '{estimate_id}' not found — its cached comps/estimate are gone "
                 "(server restarted, or estimate_value wasn't called this session). Re-run "
                 "estimate_value, then call render_report with the new estimate_id.")
-        excl = {e["address"]: e.get("reason") for e in (exclusions or [])}
-        comps = [ReportComp(comp=c, kept=c.address not in excl,
-                            exclude_reason=excl.get(c.address)) for c in bundle["comps"]]
+        comps = [ReportComp(comp=c, kept=True) for c in bundle["comps"]]
+        comps += [ReportComp(comp=c, kept=False, exclude_reason=r)
+                  for c, r in bundle.get("excluded", [])]
         payload = ReportPayload(
             subject=bundle["subject"], comps=comps, estimate=bundle["estimate"],
             confidence_reasoning=confidence_reasoning, target_warnings=target_warnings or [],
@@ -209,26 +234,27 @@ def main() -> None:
         """Find comparable recent sales near a subject and filter/rank by KV's house
         rules (radius, size, recency, age; ranked by similarity). Sam's hard limits
         (radius/size/age) never widen; if too few comps, it relaxes recency 6->12mo
-        then the secondary match toggles. Takes the subject object from get_subject."""
+        then the secondary match toggles. Takes the subject object from get_subject.
+        Returns a `comps_id` — pass THAT (not the comp array) to estimate_value."""
         crit = Criteria(**criteria) if criteria else Criteria()
         return tools.find_comps(Subject(**subject), crit).model_dump(by_alias=True)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True,
                            "openWorldHint": False, "title": "Estimate value from comps"})
-    def estimate_value(subject: dict, comps: list, rules: Optional[dict] = None,
-                       overrides: Optional[dict] = None, ladder_depth: int = 0) -> dict:
-        """Estimate the subject's value from comps via market-derived adjustments
-        (paired-sales/grouping/regression) blended by median. Pure computation, no
-        network. Each adjustment reports its method, evidence and confidence; Tier-2
-        dimensions (age, location) come back as `disclosures`, not adjustments. Pass
-        `overrides` (e.g. {"garage_value": 10000}) to replace a derived coefficient.
-        Takes comps from find_comps; pass the FULL comp set, not a display subset.
-        Returns an `estimate_id` — pass THAT (not this whole object) to render_report."""
+    def estimate_value(comps_id: str, rules: Optional[dict] = None,
+                       overrides: Optional[dict] = None, exclusions: Optional[list] = None) -> dict:
+        """Estimate the subject's value from a comp set via market-derived adjustments
+        (paired-sales/grouping/regression) blended by median. Pure computation, no network.
+
+        Pass ONLY the `comps_id` from find_comps (the server still holds the subject and the
+        FULL comp set) — do NOT re-send the comps. Each adjustment reports its method, evidence
+        and confidence; Tier-2 dimensions (age, location) come back as `disclosures`. Pass
+        `overrides` (e.g. {"garage_value": 10000}) to replace a derived coefficient, and
+        `exclusions` (a list of {"address","reason"}) to drop outlier comps from the value
+        (they're shown as excluded in the report). Returns an `estimate_id` for render_report."""
         r = AdjustmentRules(**rules) if rules else AdjustmentRules()
-        from mcp_server.models import Comp
-        cs = [Comp(**c) for c in comps]
-        return tools.estimate_value(Subject(**subject), cs, rules=r,
-                                    overrides=overrides, ladder_depth=ladder_depth).model_dump()
+        return tools.estimate_from_comps(comps_id, rules=r, overrides=overrides,
+                                         exclusions=exclusions or []).model_dump()
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True,
                            "title": "Cross-check estimate"})
@@ -241,22 +267,20 @@ def main() -> None:
                            "openWorldHint": False, "title": "Render HTML report"})
     def render_report(estimate_id: str, confidence_reasoning: str = "",
                       target_warnings: Optional[list] = None,
-                      verify_next: Optional[list] = None,
-                      exclusions: Optional[list] = None) -> dict:
+                      verify_next: Optional[list] = None) -> dict:
         """Render the self-contained, interactive HTML comp report to disk; return its
         absolute path. Call this as the FINAL step, once the value is settled.
 
         Pass ONLY the `estimate_id` returned by estimate_value (the server still holds the
         subject, comps and full estimate for it) plus your small narrative — do NOT re-send
         the estimate or comps. `confidence_reasoning`: your one-paragraph why. `target_warnings`:
-        subject-specific cautions, shown first. `verify_next`: what you'd check next.
-        `exclusions`: list of {"address","reason"} to curate specific comps out of the report.
+        subject-specific cautions, shown first. `verify_next`: what you'd check next. (Curate
+        comps out at estimate_value via its `exclusions`; they render as excluded automatically.)
         Tell the user the FOLDER and the full file path explicitly (file:// links usually aren't
         clickable in Desktop chat, so the path must be copy-pasteable)."""
         path = tools.render_from_estimate(
             estimate_id, confidence_reasoning=confidence_reasoning,
-            target_warnings=target_warnings or [], verify_next=verify_next or [],
-            exclusions=exclusions or [])
+            target_warnings=target_warnings or [], verify_next=verify_next or [])
         return {"path": path, "directory": os.path.dirname(path), "open_url": "file://" + path}
 
     mcp.run()  # stdio transport — local, no hosting

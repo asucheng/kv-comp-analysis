@@ -31,15 +31,19 @@ You surface judgment; you never hide it behind a number.
      location, property_type) — **ask the user** rather than guess. New builds often aren't
      in any dataset; the user is the source of truth.
 2. **`find_comps(subject, criteria)`** — defaults are KV's house rules (3 km, ±20% size,
-   6 mo → relaxes to 12, ±10 yr). Review `comps`, `relaxations`, and `flags`.
-3. **Curate** — if a comp's `$/sqft` is a clear outlier or it looks non-arm's-length, say
-   so and exclude it before estimating. Prefer closer, more recent, more similar comps.
-4. **`estimate_value(subject, comps, overrides?, ladder_depth)`** — pass `ladder_depth =
-   len(relaxations)` and the FULL comp set. Adjustments are derived from the comps and reported
-   with method/source/confidence; pass `overrides` to correct any coefficient. It returns an
-   **`estimate_id`** — keep it; that's what render_report needs.
+   6 mo → relaxes to 12, ±10 yr). Review `comps`, `relaxations`, and `flags`. It returns a
+   **`comps_id`** — keep it; that's what estimate_value needs (the server holds the full set).
+3. **Curate** — if a comp's `$/sqft` is a clear outlier or it looks non-arm's-length, note its
+   address + reason and drop it via `estimate_value`'s `exclusions` (below). Don't hand-build a
+   subset — the whole point of `comps_id` is that the FULL set reaches the math.
+4. **`estimate_value(comps_id, overrides?, exclusions?)`** — pass the **`comps_id`** from
+   find_comps, NOT the comp array (the server still holds the subject and full comp set; do not
+   re-send them). Adjustments are derived from the comps and reported with method/source/
+   confidence; pass `overrides` to correct any coefficient, and `exclusions` (a list of
+   `{"address","reason"}`) to drop outliers from the value. It returns an **`estimate_id`** —
+   keep it; that's what render_report needs.
 5. **Present the file** (format below).
-6. **`render_report(estimate_id, confidence_reasoning?, target_warnings?, verify_next?, exclusions?)`**
+6. **`render_report(estimate_id, confidence_reasoning?, target_warnings?, verify_next?)`**
    — the FINAL step, once the value is settled (address confirmed, any `overrides` applied).
    Pass the **`estimate_id`** from `estimate_value` plus your short narrative — the server still
    holds the subject, comps and estimate, so **do NOT re-send them**. Then surface the returned
@@ -91,8 +95,9 @@ estimate is large enough to blow the response limit — pass the id instead):
   pool", "semi subject vs. detached comps"). These render FIRST, above the standard
   project-level disclaimers (which the renderer adds automatically — do not repeat them).
 - `verify_next` — your "what I'd verify next" bullets.
-- `exclusions` *(optional)* — a list of `{"address", "reason"}` for comps you want curated
-  out of the report; everything else is kept. Name only the comps to drop, not the full set.
+
+(To curate a comp out, pass `exclusions` to **`estimate_value`**, not here — it's dropped from
+the value and shown as excluded in the report automatically.)
 
 `render_report` returns `path`, `directory`, and `open_url`. Tell the user BOTH the folder and
 the full file path explicitly — `file://` links usually aren't clickable in Desktop chat, so the
