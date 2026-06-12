@@ -1,7 +1,17 @@
 from __future__ import annotations
 from datetime import date
 from typing import Literal, Optional
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, model_validator
+
+
+def _split_baths(baths: Optional[float]) -> tuple[Optional[int], Optional[int]]:
+    """HonestDoor's X.Y bath notation (2.1 = 2 full + 1 half) -> (full, half) counts. The .Y is a
+    half-bath COUNT, not a fraction, so full = int and half = the tenths digit. These feed the
+    engine as two independent features (a half-bath is valued by the market, not as 0.5 of a full)."""
+    if baths is None:
+        return None, None
+    full = int(baths)
+    return full, round((baths - full) * 10)
 
 PropertyType = Literal["detached", "semi", "townhouse", "condo", "other"]
 Confidence = Literal["high", "medium", "low"]
@@ -18,7 +28,9 @@ class Subject(BaseModel):
     sqft: Optional[float] = None
     year_built: Optional[int] = None
     beds: Optional[float] = None
-    baths: Optional[float] = None
+    baths: Optional[float] = None     # X.Y full.half TOTAL, kept for display
+    full_baths: Optional[int] = None  # auto-derived from baths (engine feature)
+    half_baths: Optional[int] = None  # auto-derived from baths (engine feature, valued separately)
     garage: Optional[int] = None     # garage spaces (MLS numGarageSpaces, else parsed from parking_type)
     parking_type: Optional[str] = None  # MLS descriptive parking, e.g. "Double Garage Detached"
     lot_sf: Optional[float] = None
@@ -31,6 +43,11 @@ class Subject(BaseModel):
     resolved_address: Optional[str] = None
     match_candidates: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def _derive_baths(self):
+        self.full_baths, self.half_baths = _split_baths(self.baths)
+        return self
+
 
 class Comp(BaseModel):
     address: str
@@ -40,13 +57,20 @@ class Comp(BaseModel):
     sold_date: date
     sqft: float
     beds: Optional[float] = None
-    baths: Optional[float] = None
+    baths: Optional[float] = None     # X.Y full.half TOTAL, kept for display
+    full_baths: Optional[int] = None  # auto-derived from baths (engine feature)
+    half_baths: Optional[int] = None  # auto-derived from baths (engine feature, valued separately)
     garage: Optional[int] = None     # garage spaces (MLS numGarageSpaces, else parsed from parking_type)
     parking_type: Optional[str] = None  # MLS descriptive parking, e.g. "Double Garage Detached"
     year_built: Optional[int] = None
     property_type: Optional[PropertyType] = None
     distance_km: Optional[float] = None
     include_reason: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _derive_baths(self):
+        self.full_baths, self.half_baths = _split_baths(self.baths)
+        return self
 
     @computed_field  # type: ignore[misc]
     @property
@@ -101,7 +125,8 @@ class Overrides(BaseModel):
     time_pct_per_month: Optional[float] = None
     marginal_ppsf: Optional[float] = None
     bed_value: Optional[float] = None
-    bath_value: Optional[float] = None
+    bath_value: Optional[float] = None        # full-bath value
+    half_bath_value: Optional[float] = None
     garage_value: Optional[float] = None
 
 

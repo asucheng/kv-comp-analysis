@@ -85,9 +85,10 @@ def _mls_beds(details: dict[str, Any]):
 
 
 def _mls_baths(details: dict[str, Any]):
-    """HonestDoor's X.Y bath convention = full.half. MLS `numBathrooms` is the TOTAL bath
-    count and `numBathroomsPlus` is how many of those are half-baths, so full = total - half
-    (e.g. 3 total / 1 half -> 2 full + 1 half -> 2.1; verified vs HonestDoor's bathroomsTotal)."""
+    """HonestDoor's X.Y bath convention = full.half. MLS `numBathrooms` is the TOTAL bath count
+    and `numBathroomsPlus` is how many of those are half-baths, so full = total - half encoded as
+    `full + half/10` (e.g. 3 total / 1 half -> 2 full + 1 half -> 2.1). The estimate engine splits
+    this back into separate full-bath and half-bath features (see Subject/Comp.full_baths/half_baths)."""
     total = _to_num(details.get("numBathrooms"))
     if total is None:
         return None

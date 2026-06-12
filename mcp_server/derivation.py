@@ -48,7 +48,7 @@ _PPSF_CLAMP = 1000.0
 # to null-safe (unknowns tolerated) when strict yields too few pairs to derive from. Same rule
 # for time, size and features; confidence is left to the dispersion-based logic, not adjusted
 # for relaxing.
-_FEATS = ("beds", "baths", "garage", "property_type")
+_FEATS = ("beds", "full_baths", "half_baths", "garage", "property_type")
 _MIN_STRICT_PAIRS = 3
 
 
