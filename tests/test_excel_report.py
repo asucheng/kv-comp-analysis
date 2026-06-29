@@ -4,7 +4,7 @@ from mcp_server.excel_report import TEMPLATE_PATH, load_template
 from datetime import date
 from mcp_server.models import Subject, Comp, AdjustmentRules, ReportComp, ReportPayload
 from mcp_server.estimate import reconcile
-from mcp_server.excel_report import load_template, fill_comp_grid, ROWS
+from mcp_server.excel_report import load_template, fill_comp_grid, ROWS, apply_ours
 
 
 def test_template_is_vendored_and_loads():
@@ -36,6 +36,35 @@ def _payload():
                   kept=False, exclude_reason="lakefront outlier"))
     return ReportPayload(subject=s, comps=rcomps, estimate=est,
                          confidence_reasoning="Tight cluster.", as_of=date(2026, 6, 10))
+
+
+def _per_comp_by_addr(est, addr):
+    return next(ca for ca in est.per_comp if ca.address == addr)
+
+
+def test_apply_ours_reconciles_grid_to_engine():
+    wb = load_template()
+    ws = wb["Property Comparables"]
+    p = _payload()
+    info = fill_comp_grid(ws, p)
+    apply_ours(ws, p, info)
+    ca = _per_comp_by_addr(p.estimate, "71 Cranberry Pl")   # column E
+    # Adjusted Price cell equals the engine's adjusted_price exactly
+    assert ws[f"E{ROWS['adjusted_price']}"].value == ca.adjusted_price
+    # rows 34..45 sum to Total Adjustments
+    total = sum(ws[f"E{r}"].value or 0 for r in range(34, 46))
+    assert round(total) == round(ws[f"E{ROWS['total_adj']}"].value)
+    # headline: D64 = point/sqft, D65 stamped to point
+    assert abs(ws["D64"].value - p.estimate.point / p.subject.sqft) < 1e-6
+    assert ws["D65"].value == p.estimate.point
+    # range + confidence block written below the headline
+    assert ws["C66"].value == p.estimate.low and ws["D66"].value == p.estimate.high
+    assert ws["D67"].value == p.estimate.confidence
+    # two manual rows relabeled to host our size/time factors
+    assert ws[f"B{ROWS['adj_time']}"].value == "Adjustment Time (market)"
+    assert ws[f"B{ROWS['adj_size']}"].value == "Adjustment Size (per sqft)"
+    # stat range widened past K to the real last comp column (H here)
+    assert "E49:H49" in ws["D54"].value
 
 
 def test_fill_comp_grid_writes_subject_and_all_comps():

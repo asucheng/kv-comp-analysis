@@ -138,3 +138,81 @@ def fill_comp_grid(ws, payload: ReportPayload) -> dict:
     last_col = get_column_letter(idx - 1)
     return {"cols": cols, "excluded_cols": excluded_cols,
             "last_col": last_col, "formulas": formulas}
+
+
+# ---------------------------------------------------------------------------
+# Our-math adjustments + headline value (method="ours")
+# ---------------------------------------------------------------------------
+
+# factor -> the template row it occupies under our-math.
+_FACTOR_ROW = {
+    "time": ROWS["adj_time"], "size": ROWS["adj_size"], "garage": ROWS["adj_garage"],
+    "beds": ROWS["adj_beds"], "full_baths": ROWS["adj_baths"], "half_baths": ROWS["adj_baths"],
+}
+_ZERO_ROWS = (ROWS["adj_finishing"], ROWS["adj_basement"], ROWS["adj_appliances"],
+              ROWS["adj_fireplace"], ROWS["adj_neighbourhood"], ROWS["adj_deck"],
+              ROWS["adj_other"])
+
+
+def _adj_dollars(ca) -> dict:
+    """Per-factor dollar impact for one comp, summing to adjusted_price - raw_price.
+    Time is a pct on the raw price; everything else is already a dollar amount."""
+    out: dict[int, float] = {}
+    for a in ca.adjustments:
+        row = _FACTOR_ROW.get(a.factor)
+        if row is None:
+            continue
+        d = ca.raw_price * a.value_pct if a.value_pct is not None else (a.value_dollar or 0.0)
+        out[row] = out.get(row, 0.0) + d   # full+half baths fold into the Bathroom row
+    return out
+
+
+def apply_ours(ws, payload: ReportPayload, info: dict) -> None:
+    ws[f"B{ROWS['adj_time']}"] = "Adjustment Time (market)"
+    ws[f"B{ROWS['adj_size']}"] = "Adjustment Size (per sqft)"
+    by_addr = {ca.address: ca for ca in payload.estimate.per_comp}
+
+    # Map columns to comps in the SAME order fill_comp_grid used (sorted by distance),
+    # so column E in the grid is the same comp E gets here.
+    kept = [rc for rc in payload.comps if rc.kept]
+    kept.sort(key=lambda rc: (rc.comp.distance_km is None, rc.comp.distance_km or 0))
+    for col, rc in zip(info["cols"], kept):
+        ca = by_addr.get(rc.comp.address)
+        if ca is None:
+            continue
+        _set(ws, col, ROWS["appraised_list"], ca.raw_price)
+        _set(ws, col, ROWS["bidask"], "$nil")
+        dollars = _adj_dollars(ca)
+        for row in range(34, 46):
+            _set(ws, col, row, round(dollars.get(row, 0.0)))
+        total = round(ca.adjusted_price - ca.raw_price)
+        _set(ws, col, ROWS["total_adj"], total)
+        _set(ws, col, ROWS["adjusted_price"], ca.adjusted_price)
+        _set(ws, col, ROWS["adjusted_unit"], ca.adjusted_ppsf)
+
+    _write_headline(ws, payload)
+    _widen_stat_ranges(ws, info["cols"][-1] if info["cols"] else "K")
+
+
+def _write_headline(ws, payload: ReportPayload) -> None:
+    est, s = payload.estimate, payload.subject
+    if s.sqft:
+        ws["D64"] = est.point / s.sqft       # D65 = D64*D17 = point (on recalc)
+    ws["D65"] = est.point                     # stamp static so non-Excel viewers are correct
+    ws["B66"] = "KV Value Range (25th-75th)"
+    ws["C66"] = est.low
+    ws["D66"] = est.high
+    ws["B67"] = "Confidence"
+    ws["D67"] = est.confidence
+
+
+def _widen_stat_ranges(ws, last_col: str) -> None:
+    """Repoint the unit-price stat formulas from the template's fixed E:K to E:<last_col>."""
+    rng = f"E49:{last_col}49"
+    ws["D54"] = f"=MIN({rng})"
+    ws["D55"] = f"=_xlfn.PERCENTILE.INC({rng},0.25)"
+    ws["D56"] = f"=AVERAGE({rng})"
+    ws["D58"] = f"=_xlfn.PERCENTILE.INC({rng},0.75)"
+    ws["D59"] = f"=MAX({rng})"
+    ws["D60"] = f"=_xlfn.STDEV.P({rng})"
+    ws["D57"] = f"=SUM(E48:{last_col}48)/SUM(E17:{last_col}17)"
