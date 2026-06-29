@@ -2,12 +2,13 @@ import io
 import os
 import openpyxl
 import pytest
+from openpyxl.formula.translate import Translator  # noqa: F401  (sanity that dep is present)
 from mcp_server.excel_report import TEMPLATE_PATH, load_template
 from datetime import date
 from mcp_server.models import Subject, Comp, AdjustmentRules, ReportComp, ReportPayload
 from mcp_server.estimate import reconcile
 from mcp_server.excel_report import load_template, fill_comp_grid, ROWS, apply_ours
-from mcp_server.excel_report import render_report_xlsx
+from mcp_server.excel_report import render_report_xlsx, apply_template
 
 
 def test_template_is_vendored_and_loads():
@@ -109,3 +110,29 @@ def test_render_xlsx_fills_summary_and_blanks_manual_inputs():
 def test_render_xlsx_rejects_unknown_method():
     with pytest.raises(ValueError):
         render_report_xlsx(_payload(), method="bogus")
+
+
+def _coeff(est, factor):
+    return next((c.value for c in est.coefficients if c.factor == factor), None)
+
+
+def test_apply_template_sets_table_a_and_keeps_kv_dollar_per_sqft():
+    wb = load_template()
+    ws = wb["Property Comparables"]
+    kv_default = ws["D64"].value          # template's KV $/sqft before we touch it
+    p = _payload()
+    info = fill_comp_grid(ws, p)
+    apply_template(ws, p, info)
+    assert ws["D73"].value == _coeff(p.estimate, "beds")
+    assert ws["D74"].value == _coeff(p.estimate, "full_baths")
+    assert ws["D75"].value == _coeff(p.estimate, "garage")
+    # Option A leaves KV's $/sqft convention in place (does NOT stamp our point)
+    assert ws["D64"].value == kv_default
+    # per-comp formula re-instantiated for column E (adjusted price)
+    assert str(ws[f"E{ROWS['adjusted_price']}"].value).startswith("=")
+
+
+def test_render_xlsx_template_method_loads():
+    raw = render_report_xlsx(_payload(), method="template")
+    wb = openpyxl.load_workbook(io.BytesIO(raw))
+    assert "Property Comparables" in wb.sheetnames

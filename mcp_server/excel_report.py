@@ -5,6 +5,7 @@ import warnings
 import openpyxl
 from datetime import datetime
 from openpyxl.utils import get_column_letter, column_index_from_string
+from openpyxl.formula.translate import Translator
 from mcp_server.models import ReportPayload, ReportComp, Comp, Subject
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "templates", "sf_uw_template.xlsx")
@@ -217,6 +218,30 @@ def _widen_stat_ranges(ws, last_col: str) -> None:
     ws["D59"] = f"=MAX({rng})"
     ws["D60"] = f"=_xlfn.STDEV.P({rng})"
     ws["D57"] = f"=SUM(E48:{last_col}48)/SUM(E17:{last_col}17)"
+
+
+# ---------------------------------------------------------------------------
+# Template-math path (method="template") — Option A
+# ---------------------------------------------------------------------------
+
+
+def apply_template(ws, payload: ReportPayload, info: dict) -> None:
+    """Option A: feed our derived coefficients into KV's Table A and let the sheet's own
+    formulas compute. Re-instantiate the per-comp formulas (captured before clearing) for
+    every comp column so they exist past the template's original K."""
+    coeffs = {c.factor: c.value for c in payload.estimate.coefficients}
+    if "beds" in coeffs:
+        ws["D73"] = coeffs["beds"]
+    if "full_baths" in coeffs:
+        ws["D74"] = coeffs["full_baths"]
+    if "garage" in coeffs:
+        ws["D75"] = coeffs["garage"]
+
+    formulas = info["formulas"]
+    for col in info["cols"] + info["excluded_cols"]:
+        for row, f in formulas.items():
+            ws[f"{col}{row}"] = Translator(f, origin=f"E{row}").translate_formula(f"{col}{row}")
+    _widen_stat_ranges(ws, info["cols"][-1] if info["cols"] else "K")
 
 
 # ---------------------------------------------------------------------------
