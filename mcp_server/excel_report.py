@@ -43,6 +43,11 @@ FORMULA_ROWS = (ROWS["unit_price"], ROWS["appraised_list"], ROWS["bidask"],
 _FIRST_COMP_COL = "E"          # subject is D; comps start at E
 _CLEAR_LAST_COL = "P"          # sample comps + stray notes live in E..P
 _CLEAR_ROWS = range(5, 50)     # attribute + adjustment block
+# KV's template has 7 comp slots; live data keeps 100+ comps, so the grid would sprawl to
+# 100+ columns. Display only the closest N as columns (all comps still drive the engine's
+# value, which is written independently into the headline). A note discloses the full count.
+_MAX_COMP_COLS = 7
+_COMP_COUNT_NOTE_ROW = 50      # blank row just below Adjusted Unit Price (49), above stats (51)
 
 
 def _set(ws, col: str, row: int, val) -> None:
@@ -107,9 +112,11 @@ def _fill_subject_col(ws, s: Subject) -> None:
         _set(ws, "D", ROWS["parking"], s.parking_type)
 
 
-def fill_comp_grid(ws, payload: ReportPayload) -> dict:
+def fill_comp_grid(ws, payload: ReportPayload, max_comp_cols: int = _MAX_COMP_COLS) -> dict:
     kept = [rc for rc in payload.comps if rc.kept]
     kept.sort(key=lambda rc: (rc.comp.distance_km is None, rc.comp.distance_km or 0))
+    total_kept = len(kept)
+    shown = kept[:max_comp_cols]            # display the closest N; all kept comps stay in the math
     excluded = [rc for rc in payload.comps if not rc.kept]
 
     formulas = _capture_formulas(ws)
@@ -118,7 +125,7 @@ def fill_comp_grid(ws, payload: ReportPayload) -> dict:
 
     cols: list[str] = []
     idx = column_index_from_string(_FIRST_COMP_COL)
-    for rc in kept:
+    for rc in shown:
         col = get_column_letter(idx)
         _fill_attr_col(ws, col, rc.comp)
         cols.append(col)
@@ -137,10 +144,16 @@ def fill_comp_grid(ws, payload: ReportPayload) -> dict:
             excluded_cols.append(col)
             idx += 1
 
+    if total_kept > len(shown):
+        ws[f"B{_COMP_COUNT_NOTE_ROW}"] = (
+            f"Showing {len(shown)} of {total_kept} comps (closest by distance); "
+            f"all {total_kept} were used in the valuation.")
+
     last_col = get_column_letter(idx - 1)
     return {"cols": cols, "excluded_cols": excluded_cols,
             "last_col": last_col, "formulas": formulas,
-            "kept_addresses": [rc.comp.address for rc in kept]}
+            "kept_addresses": [rc.comp.address for rc in shown],
+            "total_kept": total_kept, "shown": len(shown)}
 
 
 # ---------------------------------------------------------------------------
@@ -197,8 +210,8 @@ def _write_headline(ws, payload: ReportPayload) -> None:
         ws["D64"] = est.point / s.sqft       # D65 = D64*D17 = point (on recalc)
     ws["D65"] = est.point                     # stamp static so non-Excel viewers are correct
     ws["B66"] = "KV Value Range (25th-75th)"
-    ws["C66"] = est.low
-    ws["D66"] = est.high
+    # One string in D66 (not low in the narrow C "units" column, which renders as "###").
+    ws["D66"] = f"{est.low:,.0f} - {est.high:,.0f}"
     ws["B67"] = "Confidence"
     ws["D67"] = est.confidence
 

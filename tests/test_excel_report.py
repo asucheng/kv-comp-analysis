@@ -61,8 +61,9 @@ def test_apply_ours_reconciles_grid_to_engine():
     # headline: D64 = point/sqft, D65 stamped to point
     assert abs(ws["D64"].value - p.estimate.point / p.subject.sqft) < 1e-6
     assert ws["D65"].value == p.estimate.point
-    # range + confidence block written below the headline
-    assert ws["C66"].value == p.estimate.low and ws["D66"].value == p.estimate.high
+    # range + confidence block written below the headline (range is one string in D66 so the
+    # low figure doesn't land in the narrow C "units" column and render as "###")
+    assert f"{p.estimate.low:,.0f}" in ws["D66"].value and f"{p.estimate.high:,.0f}" in ws["D66"].value
     assert ws["D67"].value == p.estimate.confidence
     # two manual rows relabeled to host our size/time factors
     assert ws[f"B{ROWS['adj_time']}"].value == "Adjustment Time (market)"
@@ -89,6 +90,33 @@ def test_fill_comp_grid_writes_subject_and_all_comps():
     assert ws[f"K{ROWS['address']}"].value is None
     # formulas captured for Option A reuse
     assert ROWS["adjusted_price"] in info["formulas"]
+
+
+def test_fill_comp_grid_caps_displayed_comps_to_closest_seven():
+    # Live data keeps 100+ comps; the grid must show only the closest 7 as columns
+    # (KV's template width) while reporting that ALL were used.
+    from mcp_server.models import Subject, Comp, ReportComp, ReportPayload, AdjustmentRules
+    from mcp_server.estimate import reconcile
+    s = Subject(address="S", lat=51.0, lng=-114.0, sqft=1500, year_built=2010,
+                beds=3, baths=2, garage=2, property_type="detached")
+    comps = [Comp(address=f"{i} Test St", lat=51.0, lng=-114.0, sold_price=500_000 + i * 1000,
+                  sold_date=date(2026, 4, 1), sqft=1500 + i, year_built=2010, beds=3, baths=2,
+                  garage=2, distance_km=0.1 * i) for i in range(1, 13)]   # 12 kept comps
+    est = reconcile(s, comps, AdjustmentRules(), as_of=date(2026, 6, 10))
+    payload = ReportPayload(subject=s, comps=[ReportComp(comp=c, kept=True) for c in comps],
+                            estimate=est, as_of=date(2026, 6, 10))
+    wb = load_template()
+    ws = wb["Property Comparables"]
+    info = fill_comp_grid(ws, payload)
+    # only 7 columns written (E..K), nearest first
+    assert info["cols"] == ["E", "F", "G", "H", "I", "J", "K"]
+    assert info["total_kept"] == 12 and info["shown"] == 7
+    assert len(info["kept_addresses"]) == 7
+    assert ws[f"E{ROWS['address']}"].value == "1 Test St"   # closest (distance 0.1)
+    assert ws[f"L{ROWS['address']}"].value is None          # 8th comp NOT written as a column
+    # disclosure note present, naming the full count
+    note = ws[f"B50"].value
+    assert note is not None and "7 of 12" in note and "valuation" in note
 
 
 _BLANKED = ["D10", "D11", "D12", "D22", "D24", "D37", "D42"]
