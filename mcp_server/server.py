@@ -15,6 +15,7 @@ from mcp_server.geocode import Geocoder, NominatimGeocoder
 from mcp_server.comps import find_with_ladder
 from mcp_server.estimate import reconcile
 from mcp_server.report import render_report_html, slug
+from mcp_server.excel_report import render_report_xlsx
 
 # Fetch the candidate pool at Sam's HARD limits. Radius is never widened (3 km is a
 # hard limit), and recency is fetched at the ladder's 12-month cap so the only
@@ -136,7 +137,8 @@ class Tools:
     def render_from_estimate(self, estimate_id: str, *, confidence_reasoning: str = "",
                              target_warnings: Optional[list] = None,
                              verify_next: Optional[list] = None,
-                             out_dir: Optional[str] = None) -> str:
+                             out_dir: Optional[str] = None,
+                             fmt: str = "html", method: str = "ours") -> str:
         """Render the report from a cached estimate_id plus the agent's small narrative. The kept
         comps and any curated-out comps both come from the cache (exclusions are set at
         estimate_value, not here)."""
@@ -153,7 +155,7 @@ class Tools:
             subject=bundle["subject"], comps=comps, estimate=bundle["estimate"],
             confidence_reasoning=confidence_reasoning, target_warnings=target_warnings or [],
             verify_next=verify_next or [], as_of=bundle["as_of"])
-        return self.render_report(payload, out_dir=out_dir)
+        return self.render_report(payload, out_dir=out_dir, fmt=fmt, method=method)
 
     def cross_check(self, subject: Subject, estimate_point: float) -> CrossCheck:
         rec = self.source.get_property(subject.address)
@@ -170,17 +172,24 @@ class Tools:
                           vs_avm_pct=vs_avm, vs_assessment_pct=vs_assess,
                           verdict=verdict, notes=notes)
 
-    def render_report(self, payload: ReportPayload, out_dir: Optional[str] = None) -> str:
-        """Write the self-contained HTML report to disk; return its absolute path.
+    def render_report(self, payload: ReportPayload, out_dir: Optional[str] = None,
+                      *, fmt: str = "html", method: str = "ours") -> str:
+        """Write the report to disk; return its absolute path. `fmt` is "html" (default)
+        or "xlsx"; for xlsx, `method` is "ours" (our math in KV's layout) or "template"
+        (our coefficients drive KV's own formulas).
 
         The default output dir is ABSOLUTE ($KV_COMP_REPORTS_DIR, else ~/kv-comp-reports),
         never CWD-relative — Claude Desktop launches the stdio server from a non-writable
-        working directory, so a relative "reports/" would fail with PermissionError. Falls
-        back to the system temp dir if the primary location can't be written.
-        """
+        working directory. Falls back to the system temp dir if the primary location can't
+        be written."""
         name = slug(payload.subject.resolved_address or payload.subject.address)[:80].rstrip("-")
-        fname = f"{name}-{payload.as_of}.html"
-        content = render_report_html(payload)
+        if fmt == "xlsx":
+            content: "str | bytes" = render_report_xlsx(payload, method=method)
+            ext, mode = "xlsx", "wb"
+        else:
+            content = render_report_html(payload)
+            ext, mode = "html", "w"
+        fname = f"{name}-{payload.as_of}.{ext}"
         candidates = ([out_dir] if out_dir is not None
                       else [_reports_dir(), os.path.join(tempfile.gettempdir(), "kv-comp-reports")])
         last_err: Optional[OSError] = None
@@ -188,12 +197,16 @@ class Tools:
             try:
                 os.makedirs(d, exist_ok=True)
                 path = os.path.abspath(os.path.join(d, fname))
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(content)
+                if mode == "wb":
+                    with open(path, "wb") as f:
+                        f.write(content)               # type: ignore[arg-type]
+                else:
+                    with open(path, "w", encoding="utf-8") as f:
+                        f.write(content)               # type: ignore[arg-type]
                 return path
             except OSError as e:
                 last_err = e
-        raise last_err  # type: ignore[misc]  # candidates is non-empty, so last_err is set
+        raise last_err  # type: ignore[misc]
 
 
 def _reports_dir() -> str:
@@ -264,23 +277,29 @@ def main() -> None:
         return tools.cross_check(Subject(**subject), estimate_point).model_dump()
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True,
-                           "openWorldHint": False, "title": "Render HTML report"})
+                           "openWorldHint": False, "title": "Render comp report"})
     def render_report(estimate_id: str, confidence_reasoning: str = "",
                       target_warnings: Optional[list] = None,
-                      verify_next: Optional[list] = None) -> dict:
-        """Render the self-contained, interactive HTML comp report to disk; return its
-        absolute path. Call this as the FINAL step, once the value is settled.
+                      verify_next: Optional[list] = None,
+                      format: str = "html", method: str = "ours") -> dict:
+        """Render the comp report to disk; return its absolute path. Call this as the FINAL
+        step, once the value is settled.
+
+        `format`: "html" (default, interactive web report) or "xlsx" (KV underwriter
+        spreadsheet). For xlsx, `method`: "ours" (default — our math in KV's layout) or
+        "template" (our coefficients feed KV's own formulas). Ask the user which output
+        they want before calling.
 
         Pass ONLY the `estimate_id` returned by estimate_value (the server still holds the
         subject, comps and full estimate for it) plus your small narrative — do NOT re-send
         the estimate or comps. `confidence_reasoning`: your one-paragraph why. `target_warnings`:
-        subject-specific cautions, shown first. `verify_next`: what you'd check next. (Curate
-        comps out at estimate_value via its `exclusions`; they render as excluded automatically.)
-        Tell the user the FOLDER and the full file path explicitly (file:// links usually aren't
+        subject-specific cautions, shown first. `verify_next`: what you'd check next. Tell the
+        user the FOLDER and the full file path explicitly (file:// links usually aren't
         clickable in Desktop chat, so the path must be copy-pasteable)."""
         path = tools.render_from_estimate(
             estimate_id, confidence_reasoning=confidence_reasoning,
-            target_warnings=target_warnings or [], verify_next=verify_next or [])
+            target_warnings=target_warnings or [], verify_next=verify_next or [],
+            fmt=format, method=method)
         return {"path": path, "directory": os.path.dirname(path), "open_url": "file://" + path}
 
     mcp.run()  # stdio transport — local, no hosting

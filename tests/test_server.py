@@ -263,3 +263,22 @@ def test_render_report_falls_back_to_tempdir_when_primary_unwritable(tmp_path, m
     assert os.path.exists(path)
     assert os.path.basename(os.path.dirname(path)) == "kv-comp-reports"
     assert str(blocker) not in path                        # did not use the broken primary
+
+
+import openpyxl as _openpyxl
+
+
+def test_render_report_writes_xlsx_when_format_xlsx(tmp_path):
+    tools = build_tools(source=StubCompSource(), geocoder=StubGeocoder((51.0, -114.0)),
+                        as_of=date(2026, 6, 1))
+    path = tools.render_report(_report_payload(), out_dir=str(tmp_path), fmt="xlsx")
+    assert path.endswith(".xlsx")
+    wb = _openpyxl.load_workbook(path)
+    assert "Property Comparables" in wb.sheetnames
+
+
+def test_render_from_estimate_supports_xlsx(tmp_path):
+    res = TOOLS.find_comps(TOOLS.get_subject("123 Maple Dr", overrides=SUBJECT_OVERRIDES))
+    est = TOOLS.estimate_from_comps(res.comps_id)
+    path = TOOLS.render_from_estimate(est.estimate_id, out_dir=str(tmp_path), fmt="xlsx")
+    assert path.endswith(".xlsx") and path.lower().endswith("xlsx")
