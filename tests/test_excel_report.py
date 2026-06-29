@@ -1,10 +1,13 @@
+import io
 import os
 import openpyxl
+import pytest
 from mcp_server.excel_report import TEMPLATE_PATH, load_template
 from datetime import date
 from mcp_server.models import Subject, Comp, AdjustmentRules, ReportComp, ReportPayload
 from mcp_server.estimate import reconcile
 from mcp_server.excel_report import load_template, fill_comp_grid, ROWS, apply_ours
+from mcp_server.excel_report import render_report_xlsx
 
 
 def test_template_is_vendored_and_loads():
@@ -85,3 +88,24 @@ def test_fill_comp_grid_writes_subject_and_all_comps():
     assert ws[f"K{ROWS['address']}"].value is None
     # formulas captured for Option A reuse
     assert ROWS["adjusted_price"] in info["formulas"]
+
+
+_BLANKED = ["D10", "D11", "D12", "D22", "D24", "D37", "D42"]
+
+
+def test_render_xlsx_fills_summary_and_blanks_manual_inputs():
+    raw = render_report_xlsx(_payload(), method="ours")
+    assert isinstance(raw, bytes) and raw[:2] == b"PK"   # xlsx is a zip
+    wb = openpyxl.load_workbook(io.BytesIO(raw))
+    sm = wb["Summary"]
+    assert sm["B3"].value == "138 Cranberry Place SE"
+    assert sm["D14"].value == "Cranston"
+    assert sm["D16"].value == 2007
+    assert sm["D20"].value == 1416
+    for cell in _BLANKED:
+        assert sm[cell].value is None, f"{cell} should be blanked"
+
+
+def test_render_xlsx_rejects_unknown_method():
+    with pytest.raises(ValueError):
+        render_report_xlsx(_payload(), method="bogus")

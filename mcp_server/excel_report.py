@@ -1,4 +1,5 @@
 from __future__ import annotations
+import io
 import os
 import warnings
 import openpyxl
@@ -216,3 +217,49 @@ def _widen_stat_ranges(ws, last_col: str) -> None:
     ws["D59"] = f"=MAX({rng})"
     ws["D60"] = f"=_xlfn.STDEV.P({rng})"
     ws["D57"] = f"=SUM(E48:{last_col}48)/SUM(E17:{last_col}17)"
+
+
+# ---------------------------------------------------------------------------
+# Summary sheet
+# ---------------------------------------------------------------------------
+
+_SUMMARY_BLANK = ("D10", "D11", "D12", "D22", "D24", "D37", "D42")
+
+
+def fill_summary(wb, payload: ReportPayload) -> None:
+    s = payload.subject
+    sm = wb["Summary"]
+    sm["B3"] = s.resolved_address or s.address
+    if s.community:
+        sm["D14"] = s.community
+    if s.year_built is not None:
+        sm["D16"] = s.year_built
+    if s.sqft is not None:
+        sm["D20"] = s.sqft
+    if s.lot_sf is not None:
+        sm["D18"] = round(s.lot_sf / 10.7639, 2)   # m2; D19 = D18*10.7639 recomputes sqft
+    for cell in _SUMMARY_BLANK:
+        sm[cell] = None
+    if s.hd_estimate:
+        sm["B46"] = "HD AVM (cross-check, not a sale)"
+        sm["D46"] = s.hd_estimate
+
+
+def render_report_xlsx(payload: ReportPayload, method: str = "ours") -> bytes:
+    if method not in ("ours", "template"):
+        raise ValueError(f"unknown method {method!r}; expected 'ours' or 'template'")
+    wb = load_template()
+    ws = wb["Property Comparables"]
+    info = fill_comp_grid(ws, payload)
+    if method == "ours":
+        apply_ours(ws, payload, info)
+    else:
+        apply_template(ws, payload, info)
+    fill_summary(wb, payload)
+    try:
+        wb.calculation.fullCalcOnLoad = True   # force Excel to recompute remaining formulas
+    except Exception:
+        pass
+    bio = io.BytesIO()
+    wb.save(bio)
+    return bio.getvalue()
