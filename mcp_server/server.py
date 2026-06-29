@@ -293,8 +293,9 @@ def main() -> None:
         Pass ONLY the `estimate_id` returned by estimate_value (the server still holds the
         subject, comps and full estimate for it) plus your small narrative — do NOT re-send
         the estimate or comps. `confidence_reasoning`: your one-paragraph why. `target_warnings`:
-        subject-specific cautions, shown first. `verify_next`: what you'd check next. Tell the
-        user the FOLDER and the full file path explicitly (file:// links usually aren't
+        subject-specific cautions, shown first. `verify_next`: what you'd check next.
+        (Curate comps out at estimate_value via its `exclusions`; they render as excluded automatically.)
+        Tell the user the FOLDER and the full file path explicitly (file:// links usually aren't
         clickable in Desktop chat, so the path must be copy-pasteable)."""
         path = tools.render_from_estimate(
             estimate_id, confidence_reasoning=confidence_reasoning,

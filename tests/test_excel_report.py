@@ -136,3 +136,19 @@ def test_render_xlsx_template_method_loads():
     raw = render_report_xlsx(_payload(), method="template")
     wb = openpyxl.load_workbook(io.BytesIO(raw))
     assert "Property Comparables" in wb.sheetnames
+
+
+def test_summary_lot_sf_and_hd_estimate_cells():
+    """Summary D18 (lot area m²), D46 (HD AVM value) and B46 (label) are written
+    only when the subject carries lot_sf / hd_estimate — this test locks in those branches."""
+    p = _payload()
+    lot_sf = 4500.0
+    hd_est = 548_000.0
+    s = p.subject.model_copy(update={"lot_sf": lot_sf, "hd_estimate": hd_est})
+    p2 = p.model_copy(update={"subject": s})
+    raw = render_report_xlsx(p2, method="ours")
+    wb = openpyxl.load_workbook(io.BytesIO(raw))
+    sm = wb["Summary"]
+    assert sm["D18"].value == round(lot_sf / 10.7639, 2)
+    assert sm["D46"].value == hd_est
+    assert sm["B46"].value == "HD AVM (cross-check, not a sale)"

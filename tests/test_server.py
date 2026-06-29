@@ -1,5 +1,6 @@
 from datetime import date
 import pytest
+import openpyxl as _openpyxl
 from mcp_server.server import build_tools
 from mcp_server.models import Subject, Estimate, CrossCheck, FindCompsResult
 from mcp_server.compsource.base import PropertyRecord
@@ -263,9 +264,6 @@ def test_render_report_falls_back_to_tempdir_when_primary_unwritable(tmp_path, m
     assert os.path.exists(path)
     assert os.path.basename(os.path.dirname(path)) == "kv-comp-reports"
     assert str(blocker) not in path                        # did not use the broken primary
-
-
-import openpyxl as _openpyxl
 
 
 def test_render_report_writes_xlsx_when_format_xlsx(tmp_path):

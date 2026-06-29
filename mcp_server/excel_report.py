@@ -6,7 +6,7 @@ import openpyxl
 from datetime import datetime
 from openpyxl.utils import get_column_letter, column_index_from_string
 from openpyxl.formula.translate import Translator
-from mcp_server.models import ReportPayload, ReportComp, Comp, Subject
+from mcp_server.models import ReportPayload, Comp, Subject
 
 TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "templates", "sf_uw_template.xlsx")
 
@@ -139,7 +139,8 @@ def fill_comp_grid(ws, payload: ReportPayload) -> dict:
 
     last_col = get_column_letter(idx - 1)
     return {"cols": cols, "excluded_cols": excluded_cols,
-            "last_col": last_col, "formulas": formulas}
+            "last_col": last_col, "formulas": formulas,
+            "kept_addresses": [rc.comp.address for rc in kept]}
 
 
 # ---------------------------------------------------------------------------
@@ -151,10 +152,6 @@ _FACTOR_ROW = {
     "time": ROWS["adj_time"], "size": ROWS["adj_size"], "garage": ROWS["adj_garage"],
     "beds": ROWS["adj_beds"], "full_baths": ROWS["adj_baths"], "half_baths": ROWS["adj_baths"],
 }
-_ZERO_ROWS = (ROWS["adj_finishing"], ROWS["adj_basement"], ROWS["adj_appliances"],
-              ROWS["adj_fireplace"], ROWS["adj_neighbourhood"], ROWS["adj_deck"],
-              ROWS["adj_other"])
-
 
 def _adj_dollars(ca) -> dict:
     """Per-factor dollar impact for one comp, summing to adjusted_price - raw_price.
@@ -174,12 +171,10 @@ def apply_ours(ws, payload: ReportPayload, info: dict) -> None:
     ws[f"B{ROWS['adj_size']}"] = "Adjustment Size (per sqft)"
     by_addr = {ca.address: ca for ca in payload.estimate.per_comp}
 
-    # Map columns to comps in the SAME order fill_comp_grid used (sorted by distance),
-    # so column E in the grid is the same comp E gets here.
-    kept = [rc for rc in payload.comps if rc.kept]
-    kept.sort(key=lambda rc: (rc.comp.distance_km is None, rc.comp.distance_km or 0))
-    for col, rc in zip(info["cols"], kept):
-        ca = by_addr.get(rc.comp.address)
+    # Map columns to comps using the addresses fill_comp_grid recorded (in grid order),
+    # so column E here is always the same comp as column E in the grid — no separate sort.
+    for col, addr in zip(info["cols"], info["kept_addresses"]):
+        ca = by_addr.get(addr)
         if ca is None:
             continue
         _set(ws, col, ROWS["appraised_list"], ca.raw_price)
@@ -213,7 +208,7 @@ def _widen_stat_ranges(ws, last_col: str) -> None:
     rng = f"E49:{last_col}49"
     ws["D54"] = f"=MIN({rng})"
     ws["D55"] = f"=_xlfn.PERCENTILE.INC({rng},0.25)"
-    ws["D56"] = f"=AVERAGE({rng})"
+    ws["D56"] = f"=AVERAGE({rng})"   # D56 is labelled "Median" in KV's template but uses AVERAGE — faithfully reproduced, not a bug
     ws["D58"] = f"=_xlfn.PERCENTILE.INC({rng},0.75)"
     ws["D59"] = f"=MAX({rng})"
     ws["D60"] = f"=_xlfn.STDEV.P({rng})"
@@ -233,7 +228,7 @@ def apply_template(ws, payload: ReportPayload, info: dict) -> None:
     if "beds" in coeffs:
         ws["D73"] = coeffs["beds"]
     if "full_baths" in coeffs:
-        ws["D74"] = coeffs["full_baths"]
+        ws["D74"] = coeffs["full_baths"]   # only the full-bath coeff feeds D74; the template's bath formula uses a combined count, so the half-bath delta is intentionally approximated away in this opt-in path
     if "garage" in coeffs:
         ws["D75"] = coeffs["garage"]
 
