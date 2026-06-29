@@ -7,6 +7,7 @@ dependencies = [
     "fastmcp>=3.0",
     "pydantic>=2.6",
     "httpx>=0.27",
+    "openpyxl>=3.1",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +24,7 @@ markers = ["live: hits the real HonestDoor network endpoint"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["mcp_server"]
+include = ["mcp_server/templates/*.xlsx"]
 
 [build-system]
 requires = ["hatchling"]
