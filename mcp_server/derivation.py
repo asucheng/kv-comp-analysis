@@ -335,9 +335,10 @@ def compute_disclosures(subject: Subject, comps: list[Comp], *, as_of: date) -> 
                 factor="age",
                 skew=f"comps average {abs(avg_gap):.0f} yr {'older' if avg_gap>0 else 'newer'} than subject",
                 direction=direction,
-                caveat=("Age is controlled by the +/-10yr filter, not adjusted; an "
-                        f"{'older' if avg_gap>0 else 'newer'} comp set may {direction} "
-                        "the subject's value. Condition/rehab is out of scope.")))
+                caveat=("Gross vintage is filtered (the +/-10yr band); within the band, "
+                        "age is dollar-adjusted when a clean rate is derivable, otherwise "
+                        f"left unadjusted. An {'older' if avg_gap>0 else 'newer'} comp set "
+                        f"may {direction} the subject's value. Condition/rehab is out of scope.")))
         else:
             out.append(Disclosure(factor="age", skew="comps balanced in vintage",
                                   direction="unknown", caveat="No material vintage skew."))
