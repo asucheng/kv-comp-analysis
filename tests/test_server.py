@@ -58,6 +58,24 @@ def test_get_subject_geocode_overrides_search_hit_coords():
     assert (s.lat, s.lng) == (51.10, -114.20) and s.provenance["lat"] == "geocoded"
 
 
+def test_get_subject_raises_when_geocoding_fails():
+    # Geocode-only (matches KV-Capital-propcomp-ai): a subject we can't geocode is a
+    # hard error, NOT a silent fallback to the fuzzy search-hit coordinates.
+    top = _match("100-newbuild-way-se-calgary-ab", "100 Newbuild Way SE Calgary AB",
+                 sqft=2200, lat=50.88, lng=-113.96)
+    tools = build_tools(source=StubCompSource(matches=[top]),
+                        geocoder=StubGeocoder(None), as_of=date(2026, 6, 1))
+    with pytest.raises(ValueError, match="geocode"):
+        tools.get_subject("100 Newbuild Way SE")
+
+
+def test_default_geocoder_is_google_only():
+    # No keyless Nominatim fallback: the default geocoder is Google.
+    from mcp_server.geocode import GoogleGeocoder
+    tools = build_tools(source=StubCompSource())
+    assert isinstance(tools.geocoder, GoogleGeocoder)
+
+
 def test_get_subject_returns_match_candidates_for_confirmation():
     matches = [_match("122-auburn-bay-heights-se-calgary-ab", "122 Auburn Bay Heights SE Calgary AB", sqft=1450),
                _match("122-auburn-bay-close-se-calgary-ab", "122 Auburn Bay Close SE Calgary AB", sqft=1961),

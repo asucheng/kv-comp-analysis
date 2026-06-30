@@ -11,7 +11,7 @@ from mcp_server.models import (
 )
 from mcp_server.compsource.base import CompSource, PropertyRecord
 from mcp_server.compsource.honestdoor import HonestDoorCompSource
-from mcp_server.geocode import Geocoder, NominatimGeocoder, GoogleGeocoder
+from mcp_server.geocode import Geocoder, GoogleGeocoder
 from mcp_server.comps import find_with_ladder
 from mcp_server.estimate import reconcile
 from mcp_server.report import render_report_html, slug
@@ -58,18 +58,23 @@ class Tools:
                 data[f] = getattr(rec, f); provenance[f] = "honestdoor"
             else:
                 provenance[f] = "missing"
-        # Geocode-first (mirrors KV-Capital-propcomp-ai): coordinates come from the
-        # geocoder, which resolves ANY valid address — including brand-new builds the
-        # HonestDoor index hasn't ingested yet. The fuzzy search hit is kept only for
-        # ATTRIBUTES and confirmation: for a new build it resolves to the nearest
-        # *indexed* house, whose coordinates we must NOT adopt. User overrides still
-        # win; the search-hit coords are the fallback when geocoding is unavailable.
+        # Geocode-only (matches KV-Capital-propcomp-ai): coordinates come solely from
+        # the geocoder, which resolves ANY valid address — including brand-new builds
+        # the HonestDoor index hasn't ingested yet. The fuzzy search hit is kept only
+        # for ATTRIBUTES and confirmation: for a new build it resolves to the nearest
+        # *indexed* house, whose coordinates we must NOT adopt. A geocode miss is a
+        # hard error rather than a silent fallback to those wrong coordinates. User
+        # overrides still win.
         if (self.geocoder and provenance.get("lat") != "user"
                 and provenance.get("lng") != "user"):
             coords = self.geocoder.geocode(address)
-            if coords:
-                data["lat"], data["lng"] = coords
-                provenance["lat"] = provenance["lng"] = "geocoded"
+            if not coords:
+                raise ValueError(
+                    f"Could not geocode '{address}'. Please verify the address "
+                    "(or provide lat/lng overrides)."
+                )
+            data["lat"], data["lng"] = coords
+            provenance["lat"] = provenance["lng"] = "geocoded"
         data["hd_estimate"] = rec.hd_estimate
         data["provenance"] = provenance
         data["resolved_address"] = top.resolved_address if top else None
@@ -226,19 +231,13 @@ def _load_env_file() -> None:
         os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
 
 
-def _default_geocoder() -> Geocoder:
-    """Google geocoding (best at brand-new builds) when a key is configured; the
-    keyless Nominatim as a graceful fallback so the server still runs without one."""
-    if os.environ.get("GOOGLE_MAPS_API_KEY"):
-        return GoogleGeocoder()
-    return NominatimGeocoder()
-
-
 def build_tools(source: Optional[CompSource] = None, geocoder: Optional[Geocoder] = None,
                 as_of: Optional[date] = None) -> Tools:
     return Tools(
         source=source or HonestDoorCompSource(),
-        geocoder=geocoder if geocoder is not None else _default_geocoder(),
+        # Google-only (matches KV-Capital-propcomp-ai). Needs GOOGLE_MAPS_API_KEY;
+        # without it geocoding returns None and get_subject errors out.
+        geocoder=geocoder if geocoder is not None else GoogleGeocoder(),
         as_of=as_of or date.today(),
     )
 
@@ -247,7 +246,7 @@ def main() -> None:
     """Console entry point: register the tools with FastMCP over stdio."""
     from fastmcp import FastMCP
     _load_env_file()       # pick up GOOGLE_MAPS_API_KEY from the gitignored .env
-    tools = build_tools()  # live HonestDoor data + Google geocoder (Nominatim if no key)
+    tools = build_tools()  # live HonestDoor data + Google geocoder
     mcp = FastMCP("kv-comp-analysis")
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True,
