@@ -20,7 +20,7 @@ _LISTINGS_QUERY = (
     "getListings2(take: $take, skip: $skip, filter: $filter, order: $order){ "
     "soldPrice soldDate status type "
     "address { streetNumber streetName city neighborhood } "
-    "details { numGarageSpaces numBedrooms numBedroomsPlus numBathrooms numBathroomsPlus propertyType } "
+    "details { numGarageSpaces numBedrooms numBedroomsPlus numBathrooms numBathroomsPlus propertyType style basement1 basement2 } "
     "condominium { parkingType } "
     "property { livingArea bedroomsTotal bedroomsTotalEst bathroomsTotal bathroomsTotalEst "
     "garageSpaces yearBuilt location { lat lon } } } }"
@@ -119,6 +119,13 @@ def _garage_from_parking(parking_type: Optional[str]) -> Optional[int]:
     if "underground" in p or "parkade" in p or "carport" in p:
         return 1                         # covered, dedicated stall (counts)
     return 0                             # surface parking only -> no garage
+
+
+def _basement_display(details: dict[str, Any]) -> Optional[str]:
+    """Human-readable basement string from MLS basement1[+basement2]. Preserves the
+    API's literal "None" (= no basement); returns Python None only when both absent."""
+    parts = [b for b in (details.get("basement1"), details.get("basement2")) if b]
+    return " — ".join(parts) if parts else None
 
 
 def _map_property_type(pt: Optional[str]):
@@ -223,6 +230,9 @@ def listing_to_comp(row: dict[str, Any]) -> Optional[Comp]:
         parking_type=parking_type,
         year_built=prop.get("yearBuilt"),
         property_type=_map_property_type(details.get("propertyType")) or "detached",
+        style=details.get("style"),
+        basement=_basement_display(details),
+        community=(addr.get("neighborhood") or None),
     )
 
 
