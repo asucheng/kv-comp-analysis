@@ -350,3 +350,31 @@ def test_half_bath_never_exceeds_full_bath():
     hb = next(c for c in est.coefficients if c.factor == "half_baths")
     fb = next(c for c in est.coefficients if c.factor == "full_baths")
     assert not (hb.value and fb.value and hb.value > fb.value)   # invariant holds
+
+
+def test_feature_unit_year_built_recovers_rate():
+    # comps alike except year built; residuals ~ $2,000 per year newer
+    s = _subject(yb=2010)
+    comps = [_comp(700_000, yb=1980), _comp(702_000, yb=1980),
+             _comp(760_000, yb=2010), _comp(762_000, yb=2010)]
+    residuals = [c.sold_price for c in comps]
+    dv = derive_feature_unit(s, comps, residuals, "year_built")
+    assert dv.method in ("matched_pair", "grouping", "regression")
+    assert 1000 <= dv.value <= 4000
+
+
+def test_feature_unit_year_built_capped_when_implausible():
+    # $10,000/yr is above the $4,000 cap -> rejected -> none
+    s = _subject(yb=2010)
+    comps = [_comp(700_000, yb=1980), _comp(701_000, yb=1980),
+             _comp(1_000_000, yb=2010), _comp(1_001_000, yb=2010)]
+    residuals = [c.sold_price for c in comps]
+    dv = derive_feature_unit(s, comps, residuals, "year_built")
+    assert dv.method == "none" and dv.value == 0.0
+
+
+def test_feature_unit_year_built_none_without_variation():
+    s = _subject(yb=2000)
+    comps = [_comp(700_000, yb=2000), _comp(705_000, yb=2000)]
+    dv = derive_feature_unit(s, comps, [c.sold_price for c in comps], "year_built")
+    assert dv.method == "none" and dv.value == 0.0
