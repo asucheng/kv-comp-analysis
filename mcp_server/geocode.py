@@ -45,6 +45,13 @@ class NominatimGeocoder:
 # still runs.
 GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
+# location_type values precise enough to anchor a comp search: a rooftop fix, or a
+# point interpolated between known address points on a road. GEOMETRIC_CENTER and
+# APPROXIMATE are street/city centroids — accepting one would silently pin the
+# subject (and its comp radius) on a bogus point, so we reject and let the caller
+# fall back.
+_PRECISE_LOCATION_TYPES = {"ROOFTOP", "RANGE_INTERPOLATED"}
+
 
 class GoogleGeocoder:
     """Resolve a street address to (lat, lng) via Google Maps Geocoding, restricted
@@ -64,7 +71,11 @@ class GoogleGeocoder:
         )
         resp.raise_for_status()
         data = resp.json()
-        if data.get("status") != "OK" or not data.get("results"):
+        if data.get("status") != "OK":
             return None
-        loc = data["results"][0]["geometry"]["location"]
-        return float(loc["lat"]), float(loc["lng"])
+        for result in data.get("results", []):
+            geometry = result["geometry"]
+            if geometry.get("location_type") in _PRECISE_LOCATION_TYPES:
+                loc = geometry["location"]
+                return float(loc["lat"]), float(loc["lng"])
+        return None

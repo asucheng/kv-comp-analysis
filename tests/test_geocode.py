@@ -68,6 +68,47 @@ def test_google_geocode_returns_lat_lng_and_restricts_to_canada():
     assert "components=country" in captured["url"]  # restricted to CA
 
 
+def _google_results(*results):
+    """Build an OK response from (lat, lng, location_type) tuples."""
+    return {"status": "OK", "results": [
+        {"geometry": {"location": {"lat": lat, "lng": lng},
+                      "location_type": loc_type},
+         "formatted_address": "x"}
+        for lat, lng, loc_type in results]}
+
+
+def test_google_geocode_rejects_coarse_approximate_result():
+    # APPROXIMATE = a street/city centroid, not a rooftop fix. Accepting it would
+    # anchor the comp search on a bogus point; reject -> caller falls back.
+    def handler(request):
+        return httpx.Response(200, json=_google_results((51.05, -114.07, "APPROXIMATE")))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    geo = GoogleGeocoder(api_key="test-key", client=client)
+    assert geo.geocode("Some Vague Place, Calgary, AB") is None
+
+
+def test_google_geocode_accepts_range_interpolated():
+    def handler(request):
+        return httpx.Response(200, json=_google_results((51.05, -114.07, "RANGE_INTERPOLATED")))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    geo = GoogleGeocoder(api_key="test-key", client=client)
+    assert geo.geocode("123 Real St, Calgary, AB") == (51.05, -114.07)
+
+
+def test_google_geocode_picks_first_precise_result_over_coarse():
+    # If the most-prominent hit is coarse but a later one is a rooftop fix, use it.
+    def handler(request):
+        return httpx.Response(200, json=_google_results(
+            (50.00, -113.00, "APPROXIMATE"),
+            (51.05, -114.07, "ROOFTOP")))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    geo = GoogleGeocoder(api_key="test-key", client=client)
+    assert geo.geocode("41 Heritage Park Way, Cochrane, AB") == (51.05, -114.07)
+
+
 def test_google_geocode_returns_none_on_zero_results():
     def handler(request):
         return httpx.Response(200, json=_google_ok(0, 0, status="ZERO_RESULTS"))
