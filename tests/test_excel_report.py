@@ -72,6 +72,61 @@ def test_apply_ours_reconciles_grid_to_engine():
     assert "E49:H49" in ws["D54"].value
 
 
+def test_fill_comp_grid_writes_style_basement_community_per_comp():
+    wb = load_template()
+    ws = wb["Property Comparables"]
+    s = Subject(address="138 Cranberry Place SE", lat=51.0, lng=-114.0, sqft=1416,
+                year_built=2007, beds=3, baths=3, garage=1, community="Cranston",
+                property_type="detached")
+    comps = [Comp(address=a, lat=51.0, lng=-114.0, sold_price=p, sold_date=date(2026, 4, 1),
+                  sqft=sq, year_built=2007, beds=3, baths=3, garage=2, distance_km=d,
+                  style=st, basement=bs, community=nb, include_reason="x")
+             for a, p, sq, d, st, bs, nb in [
+                 ("71 Cranberry Pl", 536_500, 1429, 0.1, "2-Storey", "Fin W/O — Sep Entrance", "Cranston"),
+                 ("78 Cranberry Cl", 560_000, 1425, 0.3, "Bungalow", "None", "Cranston"),
+                 ("420 Cranberry Cir", 535_000, 1356, 0.2, "2-Storey", "Finished", "Auburn Bay"),
+                 ("389 Cranberry Cir", 558_500, 1358, 0.2, "Backsplit 4", None, "Cranston")]]
+    est = reconcile(s, comps, AdjustmentRules(), as_of=date(2026, 6, 10))
+    p = ReportPayload(subject=s, comps=[ReportComp(comp=c, kept=True) for c in comps],
+                      estimate=est, as_of=date(2026, 6, 10))
+    info = fill_comp_grid(ws, p)
+    # comps are distance-sorted into columns, so look each up by its address row
+    col_of = {ws[f"{c}{ROWS['address']}"].value: c for c in info["cols"]}
+    e = col_of["71 Cranberry Pl"]
+    assert ws[f"{e}{ROWS['style']}"].value == "2-Storey"
+    assert ws[f"{e}{ROWS['basement']}"].value == "Fin W/O — Sep Entrance"
+    assert ws[f"{e}{ROWS['neighbourhood']}"].value == "Cranston"
+    # API literal "None" basement is kept; a comp with no basement leaves the cell empty
+    assert ws[f"{col_of['78 Cranberry Cl']}{ROWS['basement']}"].value == "None"
+    assert ws[f"{col_of['389 Cranberry Cir']}{ROWS['basement']}"].value is None
+
+
+def test_apply_ours_itemizes_year_built_and_reconciles():
+    # subject newer; comps split 1980/2010 with a clean ~$2k/yr signal so year_built fires
+    wb = load_template()
+    ws = wb["Property Comparables"]
+    s = Subject(address="1 New St", lat=51.0, lng=-114.0, sqft=2000, year_built=2010,
+                beds=3, baths=2, garage=2, community="Test", property_type="detached")
+    comps = [Comp(address=a, lat=51.0, lng=-114.0, sold_price=p, sold_date=date(2026, 5, 1),
+                  sqft=2000, year_built=yb, beds=3, baths=2, garage=2, distance_km=d, include_reason="x")
+             for a, p, yb, d in [("10 Old Rd", 700_000, 1980, 0.1), ("12 Old Rd", 702_000, 1980, 0.2),
+                                 ("20 New Rd", 760_000, 2010, 0.3), ("22 New Rd", 762_000, 2010, 0.4)]]
+    est = reconcile(s, comps, AdjustmentRules(), as_of=date(2026, 6, 10))
+    p = ReportPayload(subject=s, comps=[ReportComp(comp=c, kept=True) for c in comps],
+                      estimate=est, as_of=date(2026, 6, 10))
+    info = fill_comp_grid(ws, p)
+    apply_ours(ws, p, info)
+    # r45 ("Other") is relabeled to host the derived year-built adjustment
+    assert ws[f"B{ROWS['adj_other']}"].value == "Adjustment Year Built"
+    # year-built actually fired (non-zero in at least one shown comp's r45 cell)
+    yb_vals = [ws[f"{col}{ROWS['adj_other']}"].value or 0 for col in info["cols"]]
+    assert any(round(v) != 0 for v in yb_vals)
+    # itemized rows 34..45 reconcile to Total Adjustments for every shown comp
+    for col in info["cols"]:
+        total = sum(ws[f"{col}{r}"].value or 0 for r in range(34, 46))
+        assert round(total) == round(ws[f"{col}{ROWS['total_adj']}"].value)
+
+
 def test_fill_comp_grid_writes_subject_and_all_comps():
     wb = load_template()
     ws = wb["Property Comparables"]

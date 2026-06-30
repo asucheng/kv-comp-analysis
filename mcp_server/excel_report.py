@@ -90,6 +90,12 @@ def _fill_attr_col(ws, col: str, c: Comp, *, source: str = "HD") -> None:
         _set(ws, col, ROWS["baths"], c.baths)
     if c.parking_type:
         _set(ws, col, ROWS["parking"], c.parking_type)
+    if c.style:
+        _set(ws, col, ROWS["style"], c.style)
+    if c.basement:
+        _set(ws, col, ROWS["basement"], c.basement)
+    if c.community:
+        _set(ws, col, ROWS["neighbourhood"], c.community)
     if c.include_reason:
         _set(ws, col, ROWS["notes"], c.include_reason)
 
@@ -164,6 +170,9 @@ def fill_comp_grid(ws, payload: ReportPayload, max_comp_cols: int = _MAX_COMP_CO
 _FACTOR_ROW = {
     "time": ROWS["adj_time"], "size": ROWS["adj_size"], "garage": ROWS["adj_garage"],
     "beds": ROWS["adj_beds"], "full_baths": ROWS["adj_baths"], "half_baths": ROWS["adj_baths"],
+    # Our method derives a year-built adjustment KV's template has no dedicated row for; host it in
+    # the "Other" row (relabeled in apply_ours) so itemized rows still reconcile with Total Adjustments.
+    "year_built": ROWS["adj_other"],
 }
 
 def _adj_dollars(ca) -> dict:
@@ -182,6 +191,7 @@ def _adj_dollars(ca) -> dict:
 def apply_ours(ws, payload: ReportPayload, info: dict) -> None:
     ws[f"B{ROWS['adj_time']}"] = "Adjustment Time (market)"
     ws[f"B{ROWS['adj_size']}"] = "Adjustment Size (per sqft)"
+    ws[f"B{ROWS['adj_other']}"] = "Adjustment Year Built"
     by_addr = {ca.address: ca for ca in payload.estimate.per_comp}
 
     # Map columns to comps using the addresses fill_comp_grid recorded (in grid order),
