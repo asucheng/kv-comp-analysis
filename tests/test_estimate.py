@@ -88,7 +88,7 @@ def test_estimate_exposes_coefficient_traces():
                                  ("c", 705_000, 2000, 1), ("d", 718_000, 2000, 2)]]
     est = reconcile(s, comps, AdjustmentRules(), as_of=date(2026, 6, 1))
     factors = [c.factor for c in est.coefficients]
-    assert factors == ["time", "size", "beds", "full_baths", "half_baths", "garage"]
+    assert factors == ["time", "size", "beds", "full_baths", "half_baths", "garage", "year_built"]
     size = next(c for c in est.coefficients if c.factor == "size")
     assert size.is_pct is False and size.value > 0  # positive $/sqft derived
     time = next(c for c in est.coefficients if c.factor == "time")
@@ -112,6 +112,21 @@ def test_coefficient_equation_adapts_to_grouping_method():
     assert size.method == "grouping"
     assert size.groups is not None and not size.pairs
     assert "half" in size.equation  # equation reflects grouping, not matched-pair
+
+
+def test_reconcile_applies_year_built_adjustment():
+    # subject is newer; comps split 1980 vs 2010 with a clean ~$2,000/yr residual
+    s = _subject(sqft=2000, yb=2010)
+    comps = [_comp(700_000, yb=1980), _comp(702_000, yb=1980),
+             _comp(760_000, yb=2010), _comp(762_000, yb=2010)]
+    est = reconcile(s, comps, AdjustmentRules(), as_of=AS_OF, ladder_depth=0)
+    # the year_built coefficient is present and positive
+    yb = next(c for c in est.coefficients if c.factor == "year_built")
+    assert yb.value > 0
+    # an older (1980) comp gets a positive year_built dollar (adjusted up toward 2010 subject)
+    older = next(ca for ca in est.per_comp if ca.raw_price in (700_000, 702_000))
+    yb_adj = next(a for a in older.adjustments if a.factor == "year_built")
+    assert yb_adj.value_dollar > 0
 
 
 def test_feature_equation_discloses_size_constraint():

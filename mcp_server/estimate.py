@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from statistics import median, mean, pstdev, quantiles
 from typing import Optional
@@ -22,6 +22,8 @@ class DerivedSet:
     full_baths: Derivation
     half_baths: Derivation
     garage: Derivation
+    year_built: Derivation = field(
+        default_factory=lambda: Derivation(0.0, "none", "our-judgment", "not adjusted", "low"))
 
 
 def feat_dollar(subj_count, comp_count, per_unit: float) -> float:
@@ -35,7 +37,8 @@ def _override(dv: Derivation, value) -> Derivation:
     return Derivation(value, dv.method, "our-judgment", f"override (was {dv.value})", "medium")
 
 
-_UNIT = {"beds": "bed", "full_baths": "full bath", "half_baths": "half bath", "garage": "garage"}
+_UNIT = {"beds": "bed", "full_baths": "full bath", "half_baths": "half bath",
+         "garage": "garage", "year_built": "year"}
 _FEATURES = ("beds", "full_baths", "half_baths", "garage")
 
 
@@ -86,7 +89,7 @@ def _coeff(factor: str, dv: Derivation, *, is_pct: bool, unit: Optional[str] = N
 
 
 def apply_adjustments(subject: Subject, comp: Comp, derived: DerivedSet, *, as_of: date) -> CompAdjustment:
-    """Sequence time -> size -> beds -> baths -> garage on the comp's price."""
+    """Sequence time -> size -> beds -> full_baths -> half_baths -> garage -> year_built on the comp's price."""
     raw_ppsf = comp.price_per_sqft
     months = max(months_between(comp.sold_date, as_of), 0)
     adjustments: list[Adjustment] = []
@@ -119,6 +122,19 @@ def apply_adjustments(subject: Subject, comp: Comp, derived: DerivedSet, *, as_o
             ev = dv.evidence
         adjustments.append(_adj(factor, dv.method, dv.source_type, dollar=d,
                                 evidence=ev, conf=dv.confidence))
+
+    yb = derived.year_built
+    syb, cyb = subject.year_built, comp.year_built
+    d = feat_dollar(syb, cyb, yb.value)
+    p += d
+    _yb_unit = _UNIT["year_built"]
+    if d != 0:
+        ev = (f"subject {syb:g} vs comp {cyb:g} {_yb_unit} -> {syb - cyb:+g} x "
+              f"${yb.value:,.0f}/{_yb_unit} ({yb.method})")
+    else:
+        ev = yb.evidence
+    adjustments.append(_adj("year_built", yb.method, yb.source_type, dollar=d,
+                            evidence=ev, conf=yb.confidence))
 
     adjusted_price = round(p, 0)
     return CompAdjustment(
@@ -195,13 +211,17 @@ def reconcile(subject: Subject, comps: list[Comp], rules: AdjustmentRules, *,
         resid = [r - feat_dollar(getattr(subject, factor), getattr(c, factor), dv.value)
                  for r, c in zip(resid, comps)]
 
+    year_built = derive_feature_unit(subject, comps, resid, "year_built")
     derived = DerivedSet(time, size, feats["beds"], feats["full_baths"],
-                         feats["half_baths"], feats["garage"])
+                         feats["half_baths"], feats["garage"], year_built)
     notes.append(f"time {time.method} {time.value*100:.2f}%/mo; size {size.method} ${size.value:.0f}/sqft")
     for fname in _FEATURES:
         fdv = feats[fname]
         if fdv.value:
             notes.append(f"{fname}: ${fdv.value:,.0f} per {_UNIT[fname]} ({fdv.method}; {fdv.evidence})")
+    if year_built.value:
+        notes.append(f"year_built: ${year_built.value:,.0f} per {_UNIT['year_built']} "
+                     f"({year_built.method}; {year_built.evidence})")
 
     per_comp = [apply_adjustments(subject, c, derived, as_of=as_of) for c in comps]
 
@@ -234,6 +254,7 @@ def reconcile(subject: Subject, comps: list[Comp], rules: AdjustmentRules, *,
         _coeff("full_baths", feats["full_baths"], is_pct=False, unit="full bath"),
         _coeff("half_baths", feats["half_baths"], is_pct=False, unit="half bath"),
         _coeff("garage", feats["garage"], is_pct=False, unit="garage"),
+        _coeff("year_built", year_built, is_pct=False, unit="year"),
     ]
 
     return Estimate(point=point, low=low, high=high, confidence=conf, per_comp=per_comp,

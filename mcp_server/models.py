@@ -64,6 +64,9 @@ class Comp(BaseModel):
     parking_type: Optional[str] = None  # MLS descriptive parking, e.g. "Double Garage Detached"
     year_built: Optional[int] = None
     property_type: Optional[PropertyType] = None
+    style: Optional[str] = None        # MLS style/format, e.g. "2-Storey" (display-only)
+    basement: Optional[str] = None     # MLS basement1[+basement2], e.g. "Fin W/O — Sep Entrance" (display-only)
+    community: Optional[str] = None     # MLS neighbourhood (display-only)
     distance_km: Optional[float] = None
     include_reason: Optional[str] = None
 

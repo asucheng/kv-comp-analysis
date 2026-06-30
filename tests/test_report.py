@@ -181,3 +181,16 @@ def test_adjustments_section_explains_method_ladder():
     html = render_report_html(_payload())
     for phrase in ["matched pairs", "grouping", "regression", "left unadjusted"]:
         assert phrase in html
+
+
+def test_comp_row_shows_style_basement_community():
+    from mcp_server.report import _comp_row
+    from mcp_server.models import Comp, ReportComp
+    from datetime import date as _date
+    c = Comp(address="12 Elm St", lat=51.0, lng=-114.0, sold_price=550000,
+             sold_date=_date(2026, 3, 1), sqft=1500, year_built=2005,
+             style="2-Storey", basement="Fin W/O — Sep Entrance", community="Windsor Park")
+    html = _comp_row(ReportComp(comp=c, kept=True))
+    assert "2-Storey" in html
+    assert "Fin W/O — Sep Entrance" in html
+    assert "Windsor Park" in html

@@ -236,7 +236,7 @@ def derive_marginal_ppsf(subject: Subject, comps: list[Comp], prices: list[float
 # (our-judgment), not adjustment values — generous enough to admit real (even luxury)
 # values, tight enough to reject a confounded derivation (e.g. a "$112k garage" that is
 # really a size/quality difference). A per-unit value above the cap falls through.
-_FEATURE_CAP = {"beds": 80_000.0, "full_baths": 40_000.0, "half_baths": 15_000.0, "garage": 40_000.0}
+_FEATURE_CAP = {"beds": 80_000.0, "full_baths": 40_000.0, "half_baths": 15_000.0, "garage": 40_000.0, "year_built": 4_000.0}
 
 
 def _alike_except(a: Comp, b: Comp, factor: str, *, strict: bool) -> bool:
@@ -335,9 +335,10 @@ def compute_disclosures(subject: Subject, comps: list[Comp], *, as_of: date) -> 
                 factor="age",
                 skew=f"comps average {abs(avg_gap):.0f} yr {'older' if avg_gap>0 else 'newer'} than subject",
                 direction=direction,
-                caveat=("Age is controlled by the +/-10yr filter, not adjusted; an "
-                        f"{'older' if avg_gap>0 else 'newer'} comp set may {direction} "
-                        "the subject's value. Condition/rehab is out of scope.")))
+                caveat=("Gross vintage is filtered (the +/-10yr band); within the band, "
+                        "age is dollar-adjusted when a clean rate is derivable, otherwise "
+                        f"left unadjusted. An {'older' if avg_gap>0 else 'newer'} comp set "
+                        f"may {direction} the subject's value. Condition/rehab is out of scope.")))
         else:
             out.append(Disclosure(factor="age", skew="comps balanced in vintage",
                                   direction="unknown", caveat="No material vintage skew."))

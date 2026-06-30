@@ -317,6 +317,31 @@ def test_falls_back_to_property_when_no_mls_details():
     assert c.parking_type is None
 
 
+def test_listing_to_comp_maps_style_basement_neighbourhood():
+    row = {"type": "SALE", "soldPrice": "550000", "soldDate": "2026-03-01T00:00:00Z",
+           "address": {"streetNumber": "12", "streetName": "Elm St",
+                       "city": "Calgary", "neighborhood": "Windsor Park"},
+           "details": {"propertyType": "Detached", "style": "2-Storey",
+                       "basement1": "Fin W/O", "basement2": "Sep Entrance"},
+           "property": {"livingArea": "1500", "yearBuilt": 2005,
+                        "location": {"lat": 51.0, "lon": -114.0}}}
+    c = listing_to_comp(row)
+    assert c.style == "2-Storey"
+    assert c.basement == "Fin W/O — Sep Entrance"
+    assert c.community == "Windsor Park"
+
+
+def test_listing_to_comp_basement_and_neighbourhood_edge_cases():
+    row = {"type": "SALE", "soldPrice": "500000", "soldDate": "2026-03-01T00:00:00Z",
+           "address": {"streetNumber": "9", "streetName": "Oak Rd", "neighborhood": ""},
+           "details": {"basement1": "None"},   # "None" is a real value (no basement)
+           "property": {"livingArea": "1200", "location": {"lat": 51.0, "lon": -114.0}}}
+    c = listing_to_comp(row)
+    assert c.basement == "None"     # preserved, not coerced
+    assert c.community is None       # empty string -> None
+    assert c.style is None
+
+
 # ---------------------------------------------------------------------------
 # Subject MLS enrichment: resolve the subject's own MLS listing by propertyId
 # so its garage/property_type/parking/bed-bath come from MLS, not the sparse entity.

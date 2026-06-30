@@ -98,8 +98,12 @@ def _comp_row(rc) -> str:
     c = rc.comp
     dist = f"{c.distance_km:.1f} km" if c.distance_km is not None else "—"
     built = _esc(c.year_built) if c.year_built else "—"
+    style = _esc(c.style or "—")
+    basement = _esc(c.basement or "—")
+    community = _esc(c.community or "—")
     return (f"<tr><td>{_esc(c.address)}</td><td>{_money(c.sold_price)}</td>"
             f"<td>{_esc(c.sold_date)}</td><td>{c.sqft:,.0f}</td><td>{built}</td>"
+            f"<td>{style}</td><td>{basement}</td><td>{community}</td>"
             f"<td>${c.price_per_sqft:,.0f}</td><td>{dist}</td>"
             f"<td>{_esc(c.include_reason or '')}</td></tr>")
 
@@ -109,7 +113,8 @@ def _comps_section(comps) -> str:
     kept.sort(key=lambda rc: (rc.comp.distance_km is None, rc.comp.distance_km or 0))
     excluded = [rc for rc in comps if not rc.kept]
     head = ("<thead><tr><th>Address</th><th>Sold $</th><th>Sold date</th><th>Sqft</th>"
-            "<th>Built</th><th>$/sqft</th><th>Dist</th><th>Why included</th></tr></thead>")
+            "<th>Built</th><th>Style</th><th>Basement</th><th>Nbhd</th>"
+            "<th>$/sqft</th><th>Dist</th><th>Why included</th></tr></thead>")
     top = "".join(_comp_row(rc) for rc in kept[:10])
     out = [f"<section><h2>Comparable sales</h2>"
            f"<p class='muted'>{len(kept)} comps used (closest 10 shown).</p>"

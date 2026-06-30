@@ -7,7 +7,7 @@ from mcp_server.server import build_tools
 
 @pytest.mark.live
 def test_live_end_to_end_real_calgary_address():
-    tools = build_tools(as_of=date(2026, 6, 1))  # real HonestDoor + Nominatim
+    tools = build_tools(as_of=date(2026, 6, 1))  # real HonestDoor + Google geocoder
     try:
         subject = tools.get_subject(
             "Roxboro Road SW, Calgary, AB",
