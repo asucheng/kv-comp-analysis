@@ -65,7 +65,37 @@ def test_google_geocode_returns_lat_lng_and_restricts_to_canada():
     assert geo.geocode("41 Heritage Park Way, Cochrane, AB") == (51.0447, -114.0719)
     assert "maps.googleapis.com/maps/api/geocode/json" in captured["url"]
     assert "key=test-key" in captured["url"]
-    assert "components=country" in captured["url"]  # restricted to CA
+    assert "components=" in captured["url"] and "country" in captured["url"]  # restricted to CA
+
+
+def test_google_geocode_pins_province_and_country_via_components():
+    # Province augmentation (mirrors KV-Capital-propcomp-ai): restrict to the market's
+    # province as well as Canada, so a bare street address can't resolve out-of-region.
+    captured = {}
+
+    def handler(request):
+        captured["url"] = str(request.url)
+        return httpx.Response(200, json=_google_ok(51.0, -114.0))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    geo = GoogleGeocoder(api_key="test-key", client=client)  # default region AB
+    geo.geocode("123 Main St, Calgary")
+    url = captured["url"]
+    assert "administrative_area" in url and "AB" in url  # province pinned
+    assert "country" in url and "CA" in url              # still restricted to Canada
+
+
+def test_google_geocode_region_is_configurable():
+    captured = {}
+
+    def handler(request):
+        captured["url"] = str(request.url)
+        return httpx.Response(200, json=_google_ok(43.6, -79.4))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    geo = GoogleGeocoder(api_key="test-key", client=client, region="ON")
+    geo.geocode("123 Queen St, Toronto")
+    assert "administrative_area" in captured["url"] and "ON" in captured["url"]
 
 
 def _google_results(*results):

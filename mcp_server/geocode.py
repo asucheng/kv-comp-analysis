@@ -58,16 +58,20 @@ class GoogleGeocoder:
     to Canada. Inject `api_key`/`client` for tests; otherwise the key is read from
     GOOGLE_MAPS_API_KEY."""
 
-    def __init__(self, api_key: Optional[str] = None, client: Optional[httpx.Client] = None):
+    def __init__(self, api_key: Optional[str] = None, client: Optional[httpx.Client] = None,
+                 region: str = "AB"):
         self._api_key = api_key if api_key is not None else os.environ.get("GOOGLE_MAPS_API_KEY", "")
         self._client = client or httpx.Client(timeout=30)
+        # Pin results to the market's province (and Canada) so a bare street address
+        # can't resolve to a same-named street in another region.
+        self._components = f"administrative_area:{region}|country:CA" if region else "country:CA"
 
     def geocode(self, address: str) -> Optional[tuple[float, float]]:
         if not self._api_key:
             return None
         resp = self._client.get(
             GOOGLE_GEOCODE_URL,
-            params={"address": address, "key": self._api_key, "components": "country:CA"},
+            params={"address": address, "key": self._api_key, "components": self._components},
         )
         resp.raise_for_status()
         data = resp.json()
