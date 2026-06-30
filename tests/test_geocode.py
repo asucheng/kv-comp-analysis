@@ -2,7 +2,7 @@ from __future__ import annotations
 import json
 import httpx
 import pytest
-from mcp_server.geocode import NominatimGeocoder
+from mcp_server.geocode import NominatimGeocoder, GoogleGeocoder
 
 
 def test_geocode_returns_lat_lng_from_first_result():
@@ -43,6 +43,48 @@ def test_geocode_sends_identifying_user_agent():
     client = httpx.Client(transport=httpx.MockTransport(handler))
     NominatimGeocoder(client=client).geocode("x")
     assert captured["ua"] and "kv-comp-analysis" in captured["ua"].lower()
+
+
+def _google_ok(lat, lng, status="OK"):
+    body = {"status": status, "results": [] if status != "OK"
+            else [{"geometry": {"location": {"lat": lat, "lng": lng},
+                                "location_type": "ROOFTOP"},
+                   "formatted_address": "x"}]}
+    return body
+
+
+def test_google_geocode_returns_lat_lng_and_restricts_to_canada():
+    captured = {}
+
+    def handler(request):
+        captured["url"] = str(request.url)
+        return httpx.Response(200, json=_google_ok(51.0447, -114.0719))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    geo = GoogleGeocoder(api_key="test-key", client=client)
+    assert geo.geocode("41 Heritage Park Way, Cochrane, AB") == (51.0447, -114.0719)
+    assert "maps.googleapis.com/maps/api/geocode/json" in captured["url"]
+    assert "key=test-key" in captured["url"]
+    assert "components=country" in captured["url"]  # restricted to CA
+
+
+def test_google_geocode_returns_none_on_zero_results():
+    def handler(request):
+        return httpx.Response(200, json=_google_ok(0, 0, status="ZERO_RESULTS"))
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    geo = GoogleGeocoder(api_key="test-key", client=client)
+    assert geo.geocode("nowhere at all") is None
+
+
+def test_google_geocode_returns_none_without_api_key():
+    # No key configured -> no network call, graceful None (server still runs).
+    def handler(request):  # pragma: no cover - must not be hit
+        raise AssertionError("must not call Google without a key")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    geo = GoogleGeocoder(api_key="", client=client)
+    assert geo.geocode("123 Maple Dr") is None
 
 
 @pytest.mark.live

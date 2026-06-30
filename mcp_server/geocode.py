@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 from typing import Optional, Protocol
 import httpx
 
@@ -34,3 +35,36 @@ class NominatimGeocoder:
             return None
         top = results[0]
         return float(top["lat"]), float(top["lon"])
+
+
+# Google Maps Geocoding API. Unlike HonestDoor's property index (an AVM database
+# that only knows already-ingested properties), geocoding resolves ANY valid
+# address — including brand-new builds — so it is the authoritative source for the
+# subject's coordinates. Mirrors the KV-Capital-propcomp-ai approach. Needs
+# GOOGLE_MAPS_API_KEY; returns None (no network call) when unset so the server
+# still runs.
+GOOGLE_GEOCODE_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+
+
+class GoogleGeocoder:
+    """Resolve a street address to (lat, lng) via Google Maps Geocoding, restricted
+    to Canada. Inject `api_key`/`client` for tests; otherwise the key is read from
+    GOOGLE_MAPS_API_KEY."""
+
+    def __init__(self, api_key: Optional[str] = None, client: Optional[httpx.Client] = None):
+        self._api_key = api_key if api_key is not None else os.environ.get("GOOGLE_MAPS_API_KEY", "")
+        self._client = client or httpx.Client(timeout=30)
+
+    def geocode(self, address: str) -> Optional[tuple[float, float]]:
+        if not self._api_key:
+            return None
+        resp = self._client.get(
+            GOOGLE_GEOCODE_URL,
+            params={"address": address, "key": self._api_key, "components": "country:CA"},
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get("status") != "OK" or not data.get("results"):
+            return None
+        loc = data["results"][0]["geometry"]["location"]
+        return float(loc["lat"]), float(loc["lng"])

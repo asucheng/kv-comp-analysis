@@ -11,7 +11,7 @@ from mcp_server.models import (
 )
 from mcp_server.compsource.base import CompSource, PropertyRecord
 from mcp_server.compsource.honestdoor import HonestDoorCompSource
-from mcp_server.geocode import Geocoder, NominatimGeocoder
+from mcp_server.geocode import Geocoder, NominatimGeocoder, GoogleGeocoder
 from mcp_server.comps import find_with_ladder
 from mcp_server.estimate import reconcile
 from mcp_server.report import render_report_html, slug
@@ -58,9 +58,14 @@ class Tools:
                 data[f] = getattr(rec, f); provenance[f] = "honestdoor"
             else:
                 provenance[f] = "missing"
-        # Fall back to the geocoder for coordinates when the source had no match.
-        if (self.geocoder and provenance.get("lat") == "missing"
-                and provenance.get("lng") == "missing"):
+        # Geocode-first (mirrors KV-Capital-propcomp-ai): coordinates come from the
+        # geocoder, which resolves ANY valid address — including brand-new builds the
+        # HonestDoor index hasn't ingested yet. The fuzzy search hit is kept only for
+        # ATTRIBUTES and confirmation: for a new build it resolves to the nearest
+        # *indexed* house, whose coordinates we must NOT adopt. User overrides still
+        # win; the search-hit coords are the fallback when geocoding is unavailable.
+        if (self.geocoder and provenance.get("lat") != "user"
+                and provenance.get("lng") != "user"):
             coords = self.geocoder.geocode(address)
             if coords:
                 data["lat"], data["lng"] = coords
@@ -202,11 +207,38 @@ def _reports_dir() -> str:
     return os.path.expanduser(os.environ.get("KV_COMP_REPORTS_DIR") or "~/kv-comp-reports")
 
 
+def _load_env_file() -> None:
+    """Load KEY=VALUE lines from the project-root .env into os.environ (not overriding
+    vars already set). Keeps secrets like GOOGLE_MAPS_API_KEY out of the git-tracked
+    .mcp.json. No python-dotenv dependency; the server launches from a non-writable
+    CWD, so the path is resolved relative to this package, not the CWD."""
+    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    try:
+        with open(path) as f:
+            lines = f.readlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+
+
+def _default_geocoder() -> Geocoder:
+    """Google geocoding (best at brand-new builds) when a key is configured; the
+    keyless Nominatim as a graceful fallback so the server still runs without one."""
+    if os.environ.get("GOOGLE_MAPS_API_KEY"):
+        return GoogleGeocoder()
+    return NominatimGeocoder()
+
+
 def build_tools(source: Optional[CompSource] = None, geocoder: Optional[Geocoder] = None,
                 as_of: Optional[date] = None) -> Tools:
     return Tools(
         source=source or HonestDoorCompSource(),
-        geocoder=geocoder if geocoder is not None else NominatimGeocoder(),
+        geocoder=geocoder if geocoder is not None else _default_geocoder(),
         as_of=as_of or date.today(),
     )
 
@@ -214,7 +246,8 @@ def build_tools(source: Optional[CompSource] = None, geocoder: Optional[Geocoder
 def main() -> None:
     """Console entry point: register the tools with FastMCP over stdio."""
     from fastmcp import FastMCP
-    tools = build_tools()  # live HonestDoor data + Nominatim geocoder
+    _load_env_file()       # pick up GOOGLE_MAPS_API_KEY from the gitignored .env
+    tools = build_tools()  # live HonestDoor data + Google geocoder (Nominatim if no key)
     mcp = FastMCP("kv-comp-analysis")
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True,
