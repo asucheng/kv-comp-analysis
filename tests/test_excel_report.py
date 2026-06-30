@@ -1,0 +1,182 @@
+import io
+import os
+import openpyxl
+import pytest
+from openpyxl.formula.translate import Translator  # noqa: F401  (sanity that dep is present)
+from mcp_server.excel_report import TEMPLATE_PATH, load_template
+from datetime import date
+from mcp_server.models import Subject, Comp, AdjustmentRules, ReportComp, ReportPayload
+from mcp_server.estimate import reconcile
+from mcp_server.excel_report import load_template, fill_comp_grid, ROWS, apply_ours
+from mcp_server.excel_report import render_report_xlsx, apply_template
+
+
+def test_template_is_vendored_and_loads():
+    assert os.path.isfile(TEMPLATE_PATH)
+    wb = load_template()
+    assert "Property Comparables" in wb.sheetnames
+    assert "Summary" in wb.sheetnames
+    # anchor cells the rest of the code depends on
+    pc = wb["Property Comparables"]
+    assert pc["B6"].value == "Address"
+    assert pc["B65"].value == "KV Internal Value"
+
+
+def _payload():
+    s = Subject(address="138 Cranberry Place SE", lat=51.0, lng=-114.0, sqft=1416,
+                year_built=2007, beds=3, baths=3, garage=1, community="Cranston",
+                property_type="detached")
+    comps = [Comp(address=a, lat=51.0, lng=-114.0, sold_price=p, sold_date=date(2026, 4, 1),
+                  sqft=sq, year_built=2007, beds=3, baths=3, garage=g, distance_km=d,
+                  include_reason="same community")
+             for a, p, sq, g, d in [("71 Cranberry Pl", 536_500, 1429, 2, 0.1),
+                                    ("78 Cranberry Cl", 560_000, 1425, 2, 0.3),
+                                    ("420 Cranberry Cir", 535_000, 1356, 2, 0.2),
+                                    ("389 Cranberry Cir", 558_500, 1358, 2, 0.2)]]
+    est = reconcile(s, comps, AdjustmentRules(), as_of=date(2026, 6, 10))
+    rcomps = [ReportComp(comp=c, kept=True) for c in comps]
+    rcomps.append(ReportComp(comp=Comp(address="56 Cranbrook Landing", lat=51.0, lng=-114.0,
+                  sold_price=1_173_000, sold_date=date(2026, 4, 1), sqft=1540),
+                  kept=False, exclude_reason="lakefront outlier"))
+    return ReportPayload(subject=s, comps=rcomps, estimate=est,
+                         confidence_reasoning="Tight cluster.", as_of=date(2026, 6, 10))
+
+
+def _per_comp_by_addr(est, addr):
+    return next(ca for ca in est.per_comp if ca.address == addr)
+
+
+def test_apply_ours_reconciles_grid_to_engine():
+    wb = load_template()
+    ws = wb["Property Comparables"]
+    p = _payload()
+    info = fill_comp_grid(ws, p)
+    apply_ours(ws, p, info)
+    ca = _per_comp_by_addr(p.estimate, "71 Cranberry Pl")   # column E
+    # Adjusted Price cell equals the engine's adjusted_price exactly
+    assert ws[f"E{ROWS['adjusted_price']}"].value == ca.adjusted_price
+    # rows 34..45 sum to Total Adjustments
+    total = sum(ws[f"E{r}"].value or 0 for r in range(34, 46))
+    assert round(total) == round(ws[f"E{ROWS['total_adj']}"].value)
+    # headline: D64 = point/sqft, D65 stamped to point
+    assert abs(ws["D64"].value - p.estimate.point / p.subject.sqft) < 1e-6
+    assert ws["D65"].value == p.estimate.point
+    # range + confidence block written below the headline (range is one string in D66 so the
+    # low figure doesn't land in the narrow C "units" column and render as "###")
+    assert f"{p.estimate.low:,.0f}" in ws["D66"].value and f"{p.estimate.high:,.0f}" in ws["D66"].value
+    assert ws["D67"].value == p.estimate.confidence
+    # two manual rows relabeled to host our size/time factors
+    assert ws[f"B{ROWS['adj_time']}"].value == "Adjustment Time (market)"
+    assert ws[f"B{ROWS['adj_size']}"].value == "Adjustment Size (per sqft)"
+    # stat range widened past K to the real last comp column (H here)
+    assert "E49:H49" in ws["D54"].value
+
+
+def test_fill_comp_grid_writes_subject_and_all_comps():
+    wb = load_template()
+    ws = wb["Property Comparables"]
+    info = fill_comp_grid(ws, _payload())
+    # subject column D
+    assert ws[f"D{ROWS['floor_area']}"].value == 1416
+    # 4 kept comps land in E,F,G,H
+    assert info["cols"] == ["E", "F", "G", "H"]
+    assert ws[f"E{ROWS['address']}"].value == "71 Cranberry Pl"
+    assert ws[f"E{ROWS['price']}"].value == 536_500
+    assert ws[f"E{ROWS['floor_area']}"].value == 1429
+    # excluded comp grouped after the kept ones, with a flag
+    assert info["excluded_cols"] == ["J"]   # E-H kept, I gap header, J excluded
+    assert ws[f"J{ROWS['address']}"].value == "56 Cranbrook Landing"
+    # template sample data cleared (K had a sample comp address)
+    assert ws[f"K{ROWS['address']}"].value is None
+    # formulas captured for Option A reuse
+    assert ROWS["adjusted_price"] in info["formulas"]
+
+
+def test_fill_comp_grid_caps_displayed_comps_to_closest_seven():
+    # Live data keeps 100+ comps; the grid must show only the closest 7 as columns
+    # (KV's template width) while reporting that ALL were used.
+    from mcp_server.models import Subject, Comp, ReportComp, ReportPayload, AdjustmentRules
+    from mcp_server.estimate import reconcile
+    s = Subject(address="S", lat=51.0, lng=-114.0, sqft=1500, year_built=2010,
+                beds=3, baths=2, garage=2, property_type="detached")
+    comps = [Comp(address=f"{i} Test St", lat=51.0, lng=-114.0, sold_price=500_000 + i * 1000,
+                  sold_date=date(2026, 4, 1), sqft=1500 + i, year_built=2010, beds=3, baths=2,
+                  garage=2, distance_km=0.1 * i) for i in range(1, 13)]   # 12 kept comps
+    est = reconcile(s, comps, AdjustmentRules(), as_of=date(2026, 6, 10))
+    payload = ReportPayload(subject=s, comps=[ReportComp(comp=c, kept=True) for c in comps],
+                            estimate=est, as_of=date(2026, 6, 10))
+    wb = load_template()
+    ws = wb["Property Comparables"]
+    info = fill_comp_grid(ws, payload)
+    # only 7 columns written (E..K), nearest first
+    assert info["cols"] == ["E", "F", "G", "H", "I", "J", "K"]
+    assert info["total_kept"] == 12 and info["shown"] == 7
+    assert len(info["kept_addresses"]) == 7
+    assert ws[f"E{ROWS['address']}"].value == "1 Test St"   # closest (distance 0.1)
+    assert ws[f"L{ROWS['address']}"].value is None          # 8th comp NOT written as a column
+    # disclosure note present, naming the full count
+    note = ws[f"B50"].value
+    assert note is not None and "7 of 12" in note and "valuation" in note
+
+
+_BLANKED = ["D10", "D11", "D12", "D22", "D24", "D37", "D42"]
+
+
+def test_render_xlsx_fills_summary_and_blanks_manual_inputs():
+    raw = render_report_xlsx(_payload(), method="ours")
+    assert isinstance(raw, bytes) and raw[:2] == b"PK"   # xlsx is a zip
+    wb = openpyxl.load_workbook(io.BytesIO(raw))
+    sm = wb["Summary"]
+    assert sm["B3"].value == "138 Cranberry Place SE"
+    assert sm["D14"].value == "Cranston"
+    assert sm["D16"].value == 2007
+    assert sm["D20"].value == 1416
+    for cell in _BLANKED:
+        assert sm[cell].value is None, f"{cell} should be blanked"
+
+
+def test_render_xlsx_rejects_unknown_method():
+    with pytest.raises(ValueError):
+        render_report_xlsx(_payload(), method="bogus")
+
+
+def _coeff(est, factor):
+    return next((c.value for c in est.coefficients if c.factor == factor), None)
+
+
+def test_apply_template_sets_table_a_and_keeps_kv_dollar_per_sqft():
+    wb = load_template()
+    ws = wb["Property Comparables"]
+    kv_default = ws["D64"].value          # template's KV $/sqft before we touch it
+    p = _payload()
+    info = fill_comp_grid(ws, p)
+    apply_template(ws, p, info)
+    assert ws["D73"].value == _coeff(p.estimate, "beds")
+    assert ws["D74"].value == _coeff(p.estimate, "full_baths")
+    assert ws["D75"].value == _coeff(p.estimate, "garage")
+    # Option A leaves KV's $/sqft convention in place (does NOT stamp our point)
+    assert ws["D64"].value == kv_default
+    # per-comp formula re-instantiated for column E (adjusted price)
+    assert str(ws[f"E{ROWS['adjusted_price']}"].value).startswith("=")
+
+
+def test_render_xlsx_template_method_loads():
+    raw = render_report_xlsx(_payload(), method="template")
+    wb = openpyxl.load_workbook(io.BytesIO(raw))
+    assert "Property Comparables" in wb.sheetnames
+
+
+def test_summary_lot_sf_and_hd_estimate_cells():
+    """Summary D18 (lot area m²), D46 (HD AVM value) and B46 (label) are written
+    only when the subject carries lot_sf / hd_estimate — this test locks in those branches."""
+    p = _payload()
+    lot_sf = 4500.0
+    hd_est = 548_000.0
+    s = p.subject.model_copy(update={"lot_sf": lot_sf, "hd_estimate": hd_est})
+    p2 = p.model_copy(update={"subject": s})
+    raw = render_report_xlsx(p2, method="ours")
+    wb = openpyxl.load_workbook(io.BytesIO(raw))
+    sm = wb["Summary"]
+    assert sm["D18"].value == round(lot_sf / 10.7639, 2)
+    assert sm["D46"].value == hd_est
+    assert sm["B46"].value == "HD AVM (cross-check, not a sale)"

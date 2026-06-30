@@ -46,14 +46,17 @@ You surface judgment; you never hide it behind a number.
    so do NOT paste the entire comps table or every adjustment line into chat: that bloats the
    response and Desktop fails it with *"Claude couldn't finish this response."* Show a short
    summary and let the report carry the detail.
-6. **`render_report(estimate_id, confidence_reasoning?, target_warnings?, verify_next?)`**
-   — the FINAL step, once the value is settled (address confirmed, any `overrides` applied).
-   Pass the **`estimate_id`** from `estimate_value` plus your short narrative — the server still
-   holds the subject, comps and estimate, so **do NOT re-send them**. Re-running after an override
-   (call `estimate_value` again for a fresh id) overwrites the same file. **Keep this closing
-   reply short** — a 2–3 sentence conclusion (point value, range, confidence) plus the returned
-   **folder and full file path** (format below); the HTML holds the full detail, so don't
-   re-present the comps table or adjustment grid here.
+6. **Ask which output format the user wants**, then **`render_report(estimate_id, confidence_reasoning?, target_warnings?, verify_next?, format?, method?)`**
+   — the FINAL step, once the value is settled. Offer three choices and pass them through:
+   - **HTML** (`format="html"`, default) — the interactive web report.
+   - **Excel — KV method** (`format="xlsx", method="ours"`) — our math in KV's underwriter
+     layout; the authoritative spreadsheet.
+   - **Excel — template method** (`format="xlsx", method="template"`) — our coefficients feed
+     KV's own formulas; produce this only if a client specifically asks for the KV-spreadsheet
+     calculation.
+   Do not assume — ask before rendering. Pass the **`estimate_id`** from `estimate_value` plus
+   your short narrative — the server still holds the subject, comps and estimate, so **do NOT
+   re-send them**.
 
 > **Do NOT call `cross_check` during a valuation.** It compares the estimate to HonestDoor's
 > AVM and the municipal assessment, which must stay **independent** of the comps-derived value —
@@ -121,6 +124,14 @@ estimate is large enough to blow the response limit — pass the id instead):
   0 — confirm against MLS", an odd sqft, unconfirmed beds/baths. The renderer **always appends**
   two standard checks (verify condition in person/photos; check the specific location/community),
   so don't repeat those — add only the subject-specific ones.
+
+**Excel output.** When the user picks Excel, `render_report` writes an `.xlsx` built from KV's
+underwriter template (Property Comparables + Summary sheets) instead of HTML. `method="ours"`
+(default) writes our per-comp adjusted prices and value into the KV layout; `method="template"`
+feeds our derived coefficients into KV's own formulas. Land UW / Land Comps sheets and the
+underwriter's manual inputs (presale price, construction costs, plan/block/lot) are left blank
+for the underwriter to complete. The returned `path`/`directory`/`open_url` work the same as the
+HTML report — present the folder and full file path to the user.
 
 (To curate a comp out, pass `exclusions` to **`estimate_value`**, not here — it's dropped from
 the value and shown as excluded in the report automatically.)
