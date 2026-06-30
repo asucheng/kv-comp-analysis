@@ -11,7 +11,7 @@ from mcp_server.models import (
 )
 from mcp_server.compsource.base import CompSource, PropertyRecord
 from mcp_server.compsource.honestdoor import HonestDoorCompSource
-from mcp_server.geocode import Geocoder, NominatimGeocoder
+from mcp_server.geocode import Geocoder, GoogleGeocoder
 from mcp_server.comps import find_with_ladder
 from mcp_server.estimate import reconcile
 from mcp_server.report import render_report_html, slug
@@ -58,13 +58,23 @@ class Tools:
                 data[f] = getattr(rec, f); provenance[f] = "honestdoor"
             else:
                 provenance[f] = "missing"
-        # Fall back to the geocoder for coordinates when the source had no match.
-        if (self.geocoder and provenance.get("lat") == "missing"
-                and provenance.get("lng") == "missing"):
+        # Geocode-only (matches KV-Capital-propcomp-ai): coordinates come solely from
+        # the geocoder, which resolves ANY valid address — including brand-new builds
+        # the HonestDoor index hasn't ingested yet. The fuzzy search hit is kept only
+        # for ATTRIBUTES and confirmation: for a new build it resolves to the nearest
+        # *indexed* house, whose coordinates we must NOT adopt. A geocode miss is a
+        # hard error rather than a silent fallback to those wrong coordinates. User
+        # overrides still win.
+        if (self.geocoder and provenance.get("lat") != "user"
+                and provenance.get("lng") != "user"):
             coords = self.geocoder.geocode(address)
-            if coords:
-                data["lat"], data["lng"] = coords
-                provenance["lat"] = provenance["lng"] = "geocoded"
+            if not coords:
+                raise ValueError(
+                    f"Could not geocode '{address}'. Please verify the address "
+                    "(or provide lat/lng overrides)."
+                )
+            data["lat"], data["lng"] = coords
+            provenance["lat"] = provenance["lng"] = "geocoded"
         data["hd_estimate"] = rec.hd_estimate
         data["provenance"] = provenance
         data["resolved_address"] = top.resolved_address if top else None
@@ -202,11 +212,32 @@ def _reports_dir() -> str:
     return os.path.expanduser(os.environ.get("KV_COMP_REPORTS_DIR") or "~/kv-comp-reports")
 
 
+def _load_env_file() -> None:
+    """Load KEY=VALUE lines from the project-root .env into os.environ (not overriding
+    vars already set). Keeps secrets like GOOGLE_MAPS_API_KEY out of the git-tracked
+    .mcp.json. No python-dotenv dependency; the server launches from a non-writable
+    CWD, so the path is resolved relative to this package, not the CWD."""
+    path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+    try:
+        with open(path) as f:
+            lines = f.readlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+
+
 def build_tools(source: Optional[CompSource] = None, geocoder: Optional[Geocoder] = None,
                 as_of: Optional[date] = None) -> Tools:
     return Tools(
         source=source or HonestDoorCompSource(),
-        geocoder=geocoder if geocoder is not None else NominatimGeocoder(),
+        # Google-only (matches KV-Capital-propcomp-ai). Needs GOOGLE_MAPS_API_KEY;
+        # without it geocoding returns None and get_subject errors out.
+        geocoder=geocoder if geocoder is not None else GoogleGeocoder(),
         as_of=as_of or date.today(),
     )
 
@@ -214,7 +245,8 @@ def build_tools(source: Optional[CompSource] = None, geocoder: Optional[Geocoder
 def main() -> None:
     """Console entry point: register the tools with FastMCP over stdio."""
     from fastmcp import FastMCP
-    tools = build_tools()  # live HonestDoor data + Nominatim geocoder
+    _load_env_file()       # pick up GOOGLE_MAPS_API_KEY from the gitignored .env
+    tools = build_tools()  # live HonestDoor data + Google geocoder
     mcp = FastMCP("kv-comp-analysis")
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True, "openWorldHint": True,

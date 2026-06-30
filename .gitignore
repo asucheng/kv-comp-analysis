@@ -8,3 +8,7 @@ __pycache__/
 .claude/
 reports/
 dist/
+
+# Generated report artifacts (and editor lock files)
+*.xlsx
+.~lock.*#

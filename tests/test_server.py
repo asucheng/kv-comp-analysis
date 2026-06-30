@@ -42,7 +42,38 @@ def test_get_subject_resolves_from_top_search_hit():
     s = tools.get_subject("122 Auburn Bay Heights SE")
     assert s.sqft == 1450 and s.provenance["sqft"] == "honestdoor"
     assert s.resolved_address == "122 Auburn Bay Heights SE Calgary AB"
-    assert s.lat == 50.88 and s.provenance["lat"] == "honestdoor"  # search coords, not geocoder
+    # Geocode-first: coordinates come from the geocoder (authoritative), NOT the
+    # fuzzy search hit — attributes still come from the matched listing.
+    assert s.lat == 51.05 and s.provenance["lat"] == "geocoded"
+
+
+def test_get_subject_geocode_overrides_search_hit_coords():
+    # A subject the index resolves only fuzzily (e.g. a brand-new build matching the
+    # nearest indexed house) must still get its true coordinates from the geocoder.
+    top = _match("100-newbuild-way-se-calgary-ab", "100 Newbuild Way SE Calgary AB",
+                 sqft=2200, lat=50.88, lng=-113.96)
+    tools = build_tools(source=StubCompSource(matches=[top]),
+                        geocoder=StubGeocoder((51.10, -114.20)), as_of=date(2026, 6, 1))
+    s = tools.get_subject("100 Newbuild Way SE")
+    assert (s.lat, s.lng) == (51.10, -114.20) and s.provenance["lat"] == "geocoded"
+
+
+def test_get_subject_raises_when_geocoding_fails():
+    # Geocode-only (matches KV-Capital-propcomp-ai): a subject we can't geocode is a
+    # hard error, NOT a silent fallback to the fuzzy search-hit coordinates.
+    top = _match("100-newbuild-way-se-calgary-ab", "100 Newbuild Way SE Calgary AB",
+                 sqft=2200, lat=50.88, lng=-113.96)
+    tools = build_tools(source=StubCompSource(matches=[top]),
+                        geocoder=StubGeocoder(None), as_of=date(2026, 6, 1))
+    with pytest.raises(ValueError, match="geocode"):
+        tools.get_subject("100 Newbuild Way SE")
+
+
+def test_default_geocoder_is_google_only():
+    # No keyless Nominatim fallback: the default geocoder is Google.
+    from mcp_server.geocode import GoogleGeocoder
+    tools = build_tools(source=StubCompSource())
+    assert isinstance(tools.geocoder, GoogleGeocoder)
 
 
 def test_get_subject_returns_match_candidates_for_confirmation():

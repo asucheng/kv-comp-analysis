@@ -9,9 +9,10 @@ from mcp_server.compsource.base import CompSource, PropertyRecord
 
 
 class StubGeocoder:
-    """Deterministic geocoder returning a fixed point."""
+    """Deterministic geocoder returning a fixed point (or None to simulate a
+    geocode miss)."""
 
-    def __init__(self, latlng: tuple[float, float] = (51.05, -114.07)):
+    def __init__(self, latlng: Optional[tuple[float, float]] = (51.05, -114.07)):
         self._latlng = latlng
 
     def geocode(self, address: str) -> Optional[tuple[float, float]]:
